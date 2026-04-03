@@ -1,11 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
-import { memo } from 'react'; //memo
 import { X, Smartphone, ArrowRight, Send, CheckCircle, Copy, Check, Coins, Ticket, Loader2, ChevronLeft, AlertTriangle, TrendingUp } from 'lucide-react';
 import { ADMIN_CONTACTS, CREDIT_PRICE_ARIARY } from '../constants';
-import { storageService } from '../services/storageService';
 import { UserProfile } from '../types';
 import { useTranslation } from '../contexts/LanguageContext';
+import { usePayment } from '../hooks/queries/usePayment';
 
 interface PaymentModalProps {
   onClose: () => void;
@@ -24,6 +23,8 @@ const OPERATOR_THEMES = {
 const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, user }) => {
   const { t } = useTranslation();
 
+  const { sendAdminRequest, validateCoupon, isSubmittingRequest, isValidatingCoupon } = usePayment();
+
   const [activeTab, setActiveTab] = useState<'money' | 'coupon'>('money');
   
   // Mobile Money State
@@ -31,7 +32,6 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, user }) => {
   const [amount, setAmount] = useState<string>('5000');
   const [selectedOperator, setSelectedOperator] = useState<'mvola' | 'airtel' | 'orange'>('mvola');
   const [reference, setReference] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -79,25 +79,22 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, user }) => {
 
   const handleMoneySubmit = async () => {
     if (!reference.trim()) return;
-    setIsSubmitting(true);
     
     try {
-      await storageService.sendAdminRequest(
-        user.id,
-        user.username,
-        'credit',
-        credits,
-        `Mobile Money (${selectedOperator.toUpperCase()}). Réf: ${reference}`,
-        '' 
-      );
+      await sendAdminRequest({
+        userId: user.id,
+        username: user.username,
+        type: 'credit',
+        amount: credits,
+        transactionRef: `Mobile Money (${selectedOperator.toUpperCase()}). Réf: ${reference}`,
+        additionalInfo: '' 
+      });
       setIsSuccess(true);
       setTimeout(() => {
         onClose();
       }, 3000);
     } catch (_e) {
       console.error(_e);
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
@@ -106,20 +103,15 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, user }) => {
     setCouponStatus('loading');
     
     try {
-      const result = await storageService.redeemCode(user.id, couponCode.trim());
-      if (result.success) {
-        setCouponStatus('success');
-        setCouponMessage(`+${result.amount} ${t('payment.credits_added')}`);
-        setTimeout(() => {
-            window.location.reload(); 
-        }, 2000);
-      } else {
-        setCouponStatus('error');
-        setCouponMessage(result.message || t('payment.invalid_code'));
-      }
-    } catch (_e) {
+      const amount = await validateCoupon({ userId: user.id, code: couponCode.trim() });
+      setCouponStatus('success');
+      setCouponMessage(`+${amount} ${t('payment.credits_added')}`);
+      setTimeout(() => {
+          onClose();
+      }, 2000);
+    } catch (error: any) {
       setCouponStatus('error');
-      setCouponMessage(t('common.connection_error'));
+      setCouponMessage(error.message || t('payment.invalid_code'));
     }
   };
 
@@ -331,10 +323,10 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, user }) => {
 
                             <button 
                                 onClick={handleMoneySubmit} 
-                                disabled={!reference.trim() || isSubmitting}
+                                disabled={!reference.trim() || isSubmittingRequest}
                                 className="w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold rounded-2xl flex items-center justify-center gap-2 hover:shadow-lg disabled:opacity-70 transition-all active:scale-95"
                             >
-                                {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin"/> : <Send className="w-5 h-5" />}
+                                {isSubmittingRequest ? <Loader2 className="w-5 h-5 animate-spin"/> : <Send className="w-5 h-5" />}
                                 {t('payment.validate_credits')}
                             </button>
                         </div>
@@ -420,5 +412,4 @@ const OperatorMiniBtn = ({ name, active, color, onClick }: OperatorMiniBtnProps)
     </button>
 );
 
-//export default PaymentModal;
-export default memo(PaymentModal);
+export default PaymentModal;

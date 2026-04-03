@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { TargetLanguage, ExplanationLanguage, LearningMode, UserPreferences, LanguageLevel, LevelDescriptor } from '../types';
 import { LEVEL_DEFINITIONS, getFlagUrl } from '../constants'; // Import helper
-import { storageService } from '../services/storageService';
 import { Languages, Sun, Moon, ArrowLeft, CheckCircle2, HelpCircle, Loader2 } from 'lucide-react';
 import { useTranslation } from '../contexts/LanguageContext';
 

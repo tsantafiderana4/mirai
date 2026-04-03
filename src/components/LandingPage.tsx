@@ -3,10 +3,10 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { ArrowRight, Sparkles, Layers, Globe, Sun, Moon, CheckCircle2, Facebook, GraduationCap, MessageCircle, Star, BookOpen, Download } from 'lucide-react';
 import LiveChatDemo from './LiveChatDemo';
 import { LiveVoiceSection, DynamicDialoguesSection, ImmersiveActionSection, CertificateSection } from './LandingSections';
-import { storageService } from '../services/storageService';
 import { TargetLanguage } from '../types';
 import LegalModal from './LegalModals';
 import { getFlagUrl } from '../constants'; // Import du helper
+import { useAppStats } from '../hooks/queries/useAppStats';
 
 
 import { useTranslation } from '../contexts/LanguageContext';
@@ -28,7 +28,14 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, isDarkMode, toggleTh
   const WORDS = t('landing.hero_words') || ["GRATUITEMENT", "INTELLIGEMMENT", "RAPIDEMENT", "NATURELLEMENT", "EFFICACEMENT"];
 
   // Stats State
+  const { data: appStats } = useAppStats();
   const [stats, setStats] = useState({ visitors: 14203, students: 850, lessons: 3900 });
+
+  useEffect(() => {
+      if (appStats) {
+          setStats(appStats);
+      }
+  }, [appStats]);
 
   // PWA Install State - C'est ici qu'on stocke l'événement du navigateur
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -69,16 +76,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, isDarkMode, toggleTh
       const interval = setInterval(() => {
           setStats(prev => ({ ...prev, visitors: prev.visitors + Math.floor(Math.random() * 2) }));
       }, 4000);
-
-      // 2. Fetch real students count and add to base
-      const loadStats = async () => {
-          const users = await storageService.getAllUsers();
-          const baseStudents = 250;
-          setStats(prev => ({ 
-              ...prev, 
-              students: baseStudents + users.length 
-          }));
-      };
       
       // 3. Load Languages
       const loadLangs = async () => {
@@ -93,7 +90,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, isDarkMode, toggleTh
           setDynamicLanguages(formattedStatic);
       };
 
-      loadStats();
       loadLangs();
 
       return () => clearInterval(interval);

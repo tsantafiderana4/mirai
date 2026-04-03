@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { ExerciseItem, UserProfile, ExamResult, Certificate } from '../types';
 import { CheckCircle, XCircle, Clock, Award, AlertTriangle, Download, ArrowRight } from 'lucide-react';
-import { storageService } from '../services/storageService';
 import jsPDF from 'jspdf';
 import { useTranslation } from '../contexts/LanguageContext';
+import { useCertificates } from '../hooks/queries/useCertificates';
+import { useExamResults } from '../hooks/queries/useExamResults';
 
 interface SmartExamSessionProps {
   user: UserProfile;
@@ -14,6 +15,8 @@ interface SmartExamSessionProps {
 
 const SmartExamSession: React.FC<SmartExamSessionProps> = ({ user, questions, onClose, onComplete }) => {
   const { t } = useTranslation();
+  const { addCertificate } = useCertificates(user.id);
+  const { addExamResult } = useExamResults(user.id);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [timeLeft, setTimeLeft] = useState(600); // 10 minutes
@@ -85,10 +88,10 @@ const SmartExamSession: React.FC<SmartExamSessionProps> = ({ user, questions, on
         skillScores: { reading: finalScore, writing: finalScore, listening: finalScore, speaking: finalScore }
       };
       setCertificate(cert);
-      storageService.saveCertificate(cert);
+      addCertificate(cert).catch(console.error);
     }
     
-    storageService.saveExamResult(result);
+    addExamResult(result).catch(console.error);
     onComplete(result);
   };
 

@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { UserProfile } from '../../../types';
 import { SmartExam, ExamResultDetailed, ExamType } from '../types';
 import { SmartExamService } from '../SmartExamService';
-import { creditService, CREDIT_COSTS } from '../../../services/creditService';
+import { CREDIT_COSTS } from '../../../services/creditService';
 import { Loader2, ShieldCheck, FileText, AlertTriangle, CheckCircle, XCircle, Clock, Award, Lock, ChevronDown, ChevronUp } from 'lucide-react';
 import ExamRunner from './ExamRunner';
 import ExamResult from './ExamResult';
@@ -32,7 +32,7 @@ const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment }
     const handleStart = async (type: ExamType) => {
         const cost = type === 'certification' ? CREDIT_COSTS.EXAM : CREDIT_COSTS.DIAGNOSTIC;
         
-        const hasBalance = await creditService.checkBalance(user.id, cost);
+        const hasBalance = user.credits >= cost;
         if (!hasBalance) {
             onShowPayment();
             return;

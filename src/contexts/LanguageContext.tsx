@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Language, getTranslation } from '../i18n';
-import { storageService } from '../services/storageService';
 import { UserProfile } from '../types';
+import { useAppStore } from '../store/useAppStore';
+import { supabase } from '../lib/supabase';
 
 interface LanguageContextType {
   language: Language;
@@ -17,29 +18,29 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return (saved === 'mg' || saved === 'fr') ? saved : 'fr';
   });
 
-  const setLanguage = (lang: Language) => {
+  const setLanguage = async (lang: Language) => {
     setLanguageState(lang);
     localStorage.setItem('tm_language', lang);
     
     // Update user profile if logged in
-    storageService.getCurrentUser().then(user => {
-      if (user && user.preferences) {
-        const updatedUser = {
-          ...user,
-          preferences: {
-            ...user.preferences,
-            explanationLanguage: lang === 'mg' ? 'Malagasy 🇲🇬' : 'Français 🇫🇷'
-          }
-        };
-        storageService.saveUserProfile(updatedUser);
-      }
-    });
+    const user = useAppStore.getState().user;
+    if (user && user.preferences) {
+      const updatedUser = {
+        ...user,
+        preferences: {
+          ...user.preferences,
+          explanationLanguage: lang === 'mg' ? 'Malagasy 🇲🇬' : 'Français 🇫🇷'
+        }
+      };
+      useAppStore.getState().setUser(updatedUser);
+      await supabase.from('profiles').update({ preferences: updatedUser.preferences }).eq('id', user.id);
+    }
   };
 
   // Sync with user profile on load/change
   useEffect(() => {
-    const syncWithUser = async () => {
-      const user = await storageService.getCurrentUser();
+    const unsub = useAppStore.subscribe((state) => {
+      const user = state.user;
       if (user && user.preferences && user.preferences.explanationLanguage) {
         const prefLang = user.preferences.explanationLanguage.includes('Malagasy') ? 'mg' : 'fr';
         if (prefLang !== language) {
@@ -47,19 +48,9 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           localStorage.setItem('tm_language', prefLang);
         }
       }
-    };
-    syncWithUser();
-    
-    // Subscribe to user updates to sync language if changed elsewhere (e.g. settings)
-    const unsub = storageService.subscribeToUserUpdates((updatedUser) => {
-        if (updatedUser.preferences && updatedUser.preferences.explanationLanguage) {
-            const prefLang = updatedUser.preferences.explanationLanguage.includes('Malagasy') ? 'mg' : 'fr';
-            setLanguageState(prefLang); // Update local state without triggering save loop
-            localStorage.setItem('tm_language', prefLang);
-        }
     });
     return () => unsub();
-  }, []);
+  }, [language]);
 
   const t = (key: string, params?: Record<string, string | number>) => {
     return getTranslation(language, key, params);

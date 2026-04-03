@@ -1,4 +1,5 @@
-import { storageService } from './storageService';
+// Ce fichier ne contient plus que les constantes de coûts.
+// La logique de déduction est désormais gérée côté serveur via les Edge Functions.
 
 export const CREDIT_COSTS = {
   LESSON: 2,
@@ -10,14 +11,4 @@ export const CREDIT_COSTS = {
   DIAGNOSTIC: 40,
   EXAM: 100,
   CERTIFICATE: 100,
-};
-
-export const creditService = {
-  checkBalance: async (userId: string, requiredAmount: number): Promise<boolean> => {
-    return await storageService.canRequest(userId, requiredAmount);
-  },
-
-  deduct: async (userId: string, amount: number): Promise<boolean> => {
-    return await storageService.deductCredits(userId, amount);
-  }
 };

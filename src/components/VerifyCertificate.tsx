@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Certificate } from '../types';
-import { storageService } from '../services/storageService';
+import { supabase } from '../lib/supabase';
 import { CheckCircle, XCircle, Loader2, Award, Calendar, User, Globe } from 'lucide-react';
 
 interface Props {
@@ -16,9 +16,24 @@ const VerifyCertificate: React.FC<Props> = ({ certId, onClose }) => {
     useEffect(() => {
         const fetchCert = async () => {
             try {
-                const data = await storageService.getCertificateById(certId);
-                if (data) {
-                    setCert(data);
+                const { data, error } = await supabase
+                    .from('certificates')
+                    .select('*')
+                    .eq('id', certId)
+                    .single();
+                
+                if (data && !error) {
+                    setCert({
+                        id: data.id,
+                        userId: data.user_id,
+                        userName: data.user_name,
+                        userFullName: data.user_full_name,
+                        language: data.language,
+                        level: data.level,
+                        score: data.score,
+                        issueDate: new Date(data.created_at).getTime(),
+                        examId: data.exam_id
+                    });
                 } else {
                     setError(true);
                 }
@@ -112,7 +127,7 @@ const VerifyCertificate: React.FC<Props> = ({ certId, onClose }) => {
                             </div>
                             <div className="text-right">
                                 <div className="text-xs font-bold text-slate-400 uppercase mb-1">Score Global</div>
-                                <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{Math.round(cert.globalScore || cert.score)}%</p>
+                                <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{Math.round((cert.globalScore || cert.score) ?? 0)}%</p>
                             </div>
                         </div>
 

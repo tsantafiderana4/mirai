@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { UserProfile } from '../types';
-import { storageService } from '../services/storageService';
+import { useAuth } from '../hooks/queries/useAuth';
 import { GraduationCap, ArrowRight, Sun, Moon, Mail, Lock, User, ArrowLeft, HelpCircle, Phone, X, Send, AlertTriangle } from 'lucide-react';
 import LegalModal from './LegalModals';
 import { useTranslation } from '../contexts/LanguageContext';
@@ -16,12 +16,12 @@ interface AuthScreenProps {
 
 const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMode, toggleTheme, notify }) => {
   const { t, language, setLanguage } = useTranslation();
-  const [isRegistering, setIsRegistering] = useState(false);
+  const { login, register, resetPassword, isLoggingIn, isRegistering, isResettingPassword } = useAuth();
+  const [isRegisteringMode, setIsRegisteringMode] = useState(false);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   const [showForgotModal, setShowForgotModal] = useState(false);
@@ -32,19 +32,12 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
       e.preventDefault();
       if (!forgotData.email) return;
       
-      setIsLoading(true);
       try {
-          const result = await storageService.resetPassword(forgotData.email);
-          if (result.success) {
-              notify(t('auth.reset_email_sent') || "Email de réinitialisation envoyé !", 'success');
-              setShowForgotModal(false);
-          } else {
-              notify(result.error || "Erreur lors de l'envoi", 'error');
-          }
-      } catch (error) {
-          notify("Erreur technique", 'error');
-      } finally {
-          setIsLoading(false);
+          await resetPassword(forgotData.email);
+          notify(t('auth.reset_email_sent') || "Email de réinitialisation envoyé !", 'success');
+          setShowForgotModal(false);
+      } catch (error: any) {
+          notify(error.message || "Erreur lors de l'envoi", 'error');
       }
   };
 
@@ -56,31 +49,26 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
         setErrorMessage(t('auth.error_required_fields'));
         return;
     }
-
-    setIsLoading(true);
     
     try {
-        // IMPORTANT: Await the async Supabase calls
-        let result;
-        if (isRegistering) {
-            result = await storageService.register(username, password, email, phoneNumber);
+        let user;
+        if (isRegisteringMode) {
+            user = await register({ id: username, pass: password, email });
         } else {
-            result = await storageService.login(username, password);
+            user = await login({ id: username, pass: password });
         }
 
-        if (result.success && result.user) {
-            onAuthSuccess(result.user);
-        } else {
-            setErrorMessage(result.error || t('auth.error_generic'));
-            notify(result.error || t('auth.error_generic'), 'error');
+        if (user) {
+            onAuthSuccess(user);
         }
-    } catch (error) {
+    } catch (error: any) {
         console.error(error);
-        setErrorMessage(t('auth.error_critical'));
-    } finally {
-        setIsLoading(false);
+        setErrorMessage(error.message || t('auth.error_generic'));
+        notify(error.message || t('auth.error_generic'), 'error');
     }
   };
+
+  const isLoading = isLoggingIn || isRegistering || isResettingPassword;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-4 transition-colors duration-300 relative font-sans">
@@ -160,8 +148,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
         )}
 
         <div className="flex bg-slate-100 dark:bg-slate-800/80 p-1.5 rounded-2xl mb-8 relative z-10">
-            <button onClick={() => { setIsRegistering(false); setErrorMessage(null); }} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${!isRegistering ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-white shadow-sm ring-1 ring-black/5 dark:ring-white/10' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>{t('auth.login')}</button>
-            <button onClick={() => { setIsRegistering(true); setErrorMessage(null); }} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${isRegistering ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-white shadow-sm ring-1 ring-black/5 dark:ring-white/10' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>{t('auth.register')}</button>
+            <button onClick={() => { setIsRegisteringMode(false); setErrorMessage(null); }} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${!isRegisteringMode ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-white shadow-sm ring-1 ring-black/5 dark:ring-white/10' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>{t('auth.login')}</button>
+            <button onClick={() => { setIsRegisteringMode(true); setErrorMessage(null); }} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all ${isRegisteringMode ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-white shadow-sm ring-1 ring-black/5 dark:ring-white/10' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>{t('auth.register')}</button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5 relative z-10">
@@ -175,7 +163,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
 
           <div>
             <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-1.5 ml-3 tracking-widest uppercase">
-                {isRegistering ? t('auth.username_label') : t('auth.identity_label')}
+                {isRegisteringMode ? t('auth.username_label') : t('auth.identity_label')}
             </label>
             <div className="relative group">
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-indigo-500 transition-colors"><User className="w-full h-full" /></div>
@@ -183,7 +171,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
             </div>
           </div>
 
-          {isRegistering && (
+          {isRegisteringMode && (
             <div className="space-y-5 animate-fade-in">
                 <div>
                     <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-1.5 ml-3 tracking-widest uppercase">{t('auth.email_label')}</label>
@@ -208,7 +196,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-indigo-500 transition-colors"><Lock className="w-full h-full" /></div>
                 <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t('auth.password_placeholder')} className="w-full bg-slate-50 dark:bg-slate-800/50 text-slate-800 dark:text-white rounded-2xl pl-12 pr-4 py-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:focus:border-indigo-400 transition-all border border-slate-200 dark:border-slate-700 font-medium placeholder:text-slate-400 text-sm" />
             </div>
-            {!isRegistering && (
+            {!isRegisteringMode && (
                 <div className="flex justify-end mt-2">
                     <button type="button" onClick={() => setShowForgotModal(true)} className="text-xs text-indigo-500 hover:text-indigo-600 font-medium">
                         {t('auth.forgot_password') || "Mot de passe oublié ?"}
@@ -218,7 +206,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
           </div>
 
           <button type="submit" disabled={isLoading} className="w-full mt-8 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-2xl shadow-lg hover:shadow-indigo-500/30 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed group transform active:scale-[0.98]">
-            {isLoading ? t('auth.login_action') : (isRegistering ? t('auth.register_action') : t('auth.login_submit'))}
+            {isLoading ? t('auth.login_action') : (isRegisteringMode ? t('auth.register_action') : t('auth.login_submit'))}
             {!isLoading && <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />}
           </button>
         </form>

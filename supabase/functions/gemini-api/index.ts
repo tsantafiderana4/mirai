@@ -1,299 +1,222 @@
-// Follow this pattern to deploy your Edge Function
-/* 
-1. Create a file: supabase/functions/gemini-api/index.ts
-2. Deploy with: supabase functions deploy gemini-api --no-verify-jwt
-3. Set secrets: supabase secrets set GEMINI_API_KEY=your_key_here
-*/
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const COSTS: Record<string, number> = {
+  generate: 1,
+  generate_stream: 1,
+  generate_json: 1,
+  generate_speech: 2,
+  charge_voice_minute: 3
+}
+
 Deno.serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    const { action, model, contents, config, schemaType, text, voiceName } = await req.json()
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Non autorisé. Token manquant.' }), { 
+        status: 401, 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      })
+    }
+
+    const body = await req.json()
+    const { action, model, contents, config, schemaType, text, voiceName } = body
     
-    // 1. HEALTH CHECK
     if (action === 'health') {
         const apiKey = Deno.env.get('GEMINI_API_KEY');
-        return new Response(JSON.stringify({ 
-            status: 'ok', 
-            hasKey: !!apiKey,
-            keyLength: apiKey ? apiKey.length : 0 
-        }), {
+        return new Response(JSON.stringify({ status: 'ok', hasKey: !!apiKey }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
     }
 
-    // 2. GET API KEY
-    const apiKey = Deno.env.get('GEMINI_API_KEY')
-    if (!apiKey) {
-      // Return 200 with error field to see it in client
-      return new Response(JSON.stringify({ error: 'Missing GEMINI_API_KEY in Edge Function Secrets' }), {
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { global: { headers: { Authorization: authHeader } } }
+    )
+
+    const cost = COSTS[action] || 0
+    if (cost > 0) {
+      const { data: newBalance, error: rpcError } = await supabaseClient.rpc('consume_credits', { p_amount: cost })
+      
+      if (rpcError) {
+        console.error('[Billing Error]', rpcError)
+        return new Response(JSON.stringify({ error: 'Crédits insuffisants ou accès refusé.' }), {
+          status: 402,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+    }
+
+    if (action === 'charge_voice_minute') {
+       return new Response(JSON.stringify({ success: true }), { 
+         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+       })
+    }
+
+    // 4. RÉCUPÉRATION DES CLÉS API (ROTATION DYNAMIQUE)
+    let keys: string[] = []
+    
+    // Tentative de récupération depuis la base de données (Table api_keys)
+    const { data: dbKeys, error: keysError } = await supabaseClient.rpc('get_active_api_keys', { p_provider: 'gemini' })
+    if (!keysError && dbKeys && dbKeys.length > 0) {
+        keys = dbKeys.map((k: any) => k.key_value)
+    }
+
+    // Fallback sur les variables d'environnement si la BDD est vide
+    if (keys.length === 0) {
+        const envKey = Deno.env.get('GEMINI_API_KEY')
+        if (envKey) {
+            keys = envKey.split(',').map(k => k.trim()).filter(k => k)
+        }
+    }
+
+    if (keys.length === 0) {
+      return new Response(JSON.stringify({ error: 'Aucune clé API Gemini disponible (ni en BDD, ni en ENV).' }), {
+        status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
 
-    // Handle Rotation
-    const keys = apiKey.split(',').map(k => k.trim()).filter(k => k)
+    // Sélection aléatoire d'une clé (Load Balancing / Rotation)
     const selectedKey = keys[Math.floor(Math.random() * keys.length)]
-    
     const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    // --- ACTIONS ---
+    const targetModel = model || 'gemini-2.0-flash'
+    const { systemInstruction, ...genConfig } = config || {}
 
     if (action === 'generate') {
-      const targetModel = model || 'gemini-2.0-flash'; // Fallback to stable model
-      
-      // Extract systemInstruction from config if present
-      const { systemInstruction, ...genConfig } = config || {};
-
-      const body: any = {
+      const payload: any = {
           contents: typeof contents === 'string' ? [{ parts: [{ text: contents }] }] : contents,
           generationConfig: genConfig
-      };
-
-      if (systemInstruction) {
-          body.systemInstruction = { parts: [{ text: systemInstruction }] };
       }
+      if (systemInstruction) payload.systemInstruction = { parts: [{ text: systemInstruction }] }
 
-      const response = await fetch(`${BASE_URL}/${targetModel}:generateContent?key=${selectedKey}`, {
+      const res = await fetch(`${BASE_URL}/${targetModel}:generateContent?key=${selectedKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
+        body: JSON.stringify(payload)
+      })
 
-      if (!response.ok) {
-        const err = await response.text();
-        return new Response(JSON.stringify({ error: `Gemini API Error (${response.status}): ${err}` }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
-      const data = await response.json();
-      const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-      return new Response(JSON.stringify({ text: generatedText }), {
+      if (!res.ok) throw new Error(await res.text())
+      const data = await res.json()
+      return new Response(JSON.stringify({ text: data.candidates?.[0]?.content?.parts?.[0]?.text || "" }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
 
     if (action === 'generate_stream') {
-        const targetModel = model || 'gemini-2.0-flash';
-        
-        // Extract systemInstruction from config if present
-        const { systemInstruction, ...genConfig } = config || {};
-
-        const body: any = {
+        const payload: any = {
             contents: typeof contents === 'string' ? [{ parts: [{ text: contents }] }] : contents,
             generationConfig: genConfig
-        };
-
-        if (systemInstruction) {
-            body.systemInstruction = { parts: [{ text: systemInstruction }] };
         }
+        if (systemInstruction) payload.systemInstruction = { parts: [{ text: systemInstruction }] }
 
-        const response = await fetch(`${BASE_URL}/${targetModel}:streamGenerateContent?alt=sse&key=${selectedKey}`, {
+        const res = await fetch(`${BASE_URL}/${targetModel}:streamGenerateContent?alt=sse&key=${selectedKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
+            body: JSON.stringify(payload)
+        })
 
-        if (!response.ok) {
-            const err = await response.text();
-            // Cannot return JSON for stream, must throw or return error event
-            // We return a JSON error response instead of stream
-             return new Response(JSON.stringify({ error: `Gemini Stream API Error (${response.status}): ${err}` }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-        }
+        if (!res.ok) throw new Error(await res.text())
 
-        const reader = response.body?.getReader();
-        const encoder = new TextEncoder();
-        const decoder = new TextDecoder();
+        const reader = res.body?.getReader()
+        const encoder = new TextEncoder()
+        const decoder = new TextDecoder()
 
         const stream = new ReadableStream({
             async start(controller) {
-                if (!reader) {
-                    controller.close();
-                    return;
-                }
-
+                if (!reader) { controller.close(); return; }
                 try {
-                    let buffer = "";
+                    let buffer = ""
                     while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop() || ""; // Keep incomplete line
-
+                        const { done, value } = await reader.read()
+                        if (done) break
+                        buffer += decoder.decode(value, { stream: true })
+                        const lines = buffer.split('\n')
+                        buffer = lines.pop() || ""
                         for (const line of lines) {
                             if (line.startsWith('data: ')) {
-                                const jsonStr = line.slice(6).trim();
-                                if (jsonStr === '[DONE]') continue;
+                                const jsonStr = line.slice(6).trim()
+                                if (jsonStr === '[DONE]') continue
                                 try {
-                                    const data = JSON.parse(jsonStr);
-                                    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                                    if (text) {
-                                        // Send as SSE data
-                                        const sseData = `data: ${JSON.stringify({ text })}\n\n`;
-                                        controller.enqueue(encoder.encode(sseData));
-                                    }
-                                } catch (e) {
-                                    // Ignore parse errors
-                                }
+                                    const data = JSON.parse(jsonStr)
+                                    const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+                                    if (text) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
+                                } catch (e) {}
                             }
                         }
                     }
-                    controller.close();
-                } catch (e) {
-                    controller.error(e);
-                }
+                    controller.close()
+                } catch (e) { controller.error(e) }
             }
-        });
+        })
 
-        return new Response(stream, {
-            headers: { ...corsHeaders, 'Content-Type': 'text/event-stream' }
-        });
+        return new Response(stream, { headers: { ...corsHeaders, 'Content-Type': 'text/event-stream' } })
     }
 
     if (action === 'generate_json') {
-        const targetModel = model || 'gemini-2.0-flash';
-        let schema = config?.responseSchema;
-        
-        // Pre-defined schemas
+        let schema = config?.responseSchema
         if (schemaType === 'ARRAY_VOCAB') {
-            schema = {
-                type: 'ARRAY',
-                items: {
-                    type: 'OBJECT',
-                    properties: {
-                        word: { type: 'STRING' },
-                        translation: { type: 'STRING' },
-                        example: { type: 'STRING' }
-                    }
-                }
-            };
+            schema = { type: 'ARRAY', items: { type: 'OBJECT', properties: { word: { type: 'STRING' }, translation: { type: 'STRING' }, example: { type: 'STRING' } } } }
         } else if (schemaType === 'ARRAY_EXERCISE') {
-            schema = {
-                type: 'ARRAY',
-                items: {
-                    type: 'OBJECT',
-                    properties: {
-                        id: { type: 'STRING' },
-                        type: { type: 'STRING' },
-                        question: { type: 'STRING' },
-                        options: { type: 'ARRAY', items: { type: 'STRING' } },
-                        correctAnswer: { type: 'STRING' },
-                        explanation: { type: 'STRING' }
-                    },
-                    required: ["type", "question", "correctAnswer", "explanation"]
-                }
-            };
+            schema = { type: 'ARRAY', items: { type: 'OBJECT', properties: { id: { type: 'STRING' }, type: { type: 'STRING' }, question: { type: 'STRING' }, options: { type: 'ARRAY', items: { type: 'STRING' } }, correctAnswer: { type: 'STRING' }, explanation: { type: 'STRING' } }, required: ["type", "question", "correctAnswer", "explanation"] } }
         } else if (schemaType === 'OBJECT_ROLEPLAY') {
-            schema = {
-                type: 'OBJECT',
-                properties: {
-                    aiReply: { type: 'STRING' },
-                    correction: { type: 'STRING' },
-                    explanation: { type: 'STRING' },
-                    score: { type: 'NUMBER' },
-                    feedback: { type: 'STRING' }
-                },
-                required: ["aiReply"]
-            };
+            schema = { type: 'OBJECT', properties: { aiReply: { type: 'STRING' }, correction: { type: 'STRING' }, explanation: { type: 'STRING' }, score: { type: 'NUMBER' }, feedback: { type: 'STRING' } }, required: ["aiReply"] }
         }
 
-        // Extract systemInstruction from config if present
-        const { systemInstruction, ...genConfig } = config || {};
-
-        const body: any = {
+        const payload: any = {
             contents: typeof contents === 'string' ? [{ parts: [{ text: contents }] }] : contents,
-            generationConfig: {
-                ...genConfig,
-                responseMimeType: 'application/json',
-                responseSchema: schema
-            }
-        };
-
-        if (systemInstruction) {
-            body.systemInstruction = { parts: [{ text: systemInstruction }] };
+            generationConfig: { ...genConfig, responseMimeType: 'application/json', responseSchema: schema }
         }
+        if (systemInstruction) payload.systemInstruction = { parts: [{ text: systemInstruction }] }
 
-        const response = await fetch(`${BASE_URL}/${targetModel}:generateContent?key=${selectedKey}`, {
+        const res = await fetch(`${BASE_URL}/${targetModel}:generateContent?key=${selectedKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
+            body: JSON.stringify(payload)
+        })
 
-        if (!response.ok) {
-            const err = await response.text();
-             return new Response(JSON.stringify({ error: `Gemini JSON API Error (${response.status}): ${err}` }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-        }
-
-        const data = await response.json();
-        const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-        
-        return new Response(JSON.stringify({ json: JSON.parse(generatedText) }), {
+        if (!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        return new Response(JSON.stringify({ json: JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}") }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
     }
 
     if (action === 'generate_speech') {
-        const targetModel = model || 'gemini-2.0-flash-exp'; // TTS model
-        
-        // Extract systemInstruction from config if present (though unlikely for TTS)
-        const { systemInstruction, ...genConfig } = config || {};
-
-        const body: any = {
+        const payload: any = {
             contents: [{ parts: [{ text: text }] }],
-            generationConfig: {
-                responseModalities: ['AUDIO'],
-                speechConfig: {
-                    voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' }
-                    }
-                }
-            }
-        };
-
-        const response = await fetch(`${BASE_URL}/${targetModel}:generateContent?key=${selectedKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-
-        if (!response.ok) {
-            const err = await response.text();
-             return new Response(JSON.stringify({ error: `Gemini TTS API Error (${response.status}): ${err}` }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
+            generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' } } } }
         }
 
-        const data = await response.json();
-        const base64Audio = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        
-        return new Response(JSON.stringify({ audioBase64: base64Audio }), {
+        const res = await fetch(`${BASE_URL}/${model || 'gemini-2.0-flash-exp'}:generateContent?key=${selectedKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+
+        if (!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        return new Response(JSON.stringify({ audioBase64: data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
     }
 
-    return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+    return new Response(JSON.stringify({ error: `Action inconnue: ${action}` }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 
-  } catch (error) {
-    return new Response(JSON.stringify({ error: `Edge Function Crash: ${error.message}` }), {
+  } catch (error: any) {
+    console.error('[Edge Function Error]', error)
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   }

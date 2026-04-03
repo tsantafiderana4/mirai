@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Phone, Wifi, Loader2, AlertCircle, Activity, Volume2, Sparkles, Clock, Coins, Globe, Zap, User } from 'lucide-react';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Mic, MicOff, Phone, Wifi, Loader2, AlertCircle, Activity, Volume2, Clock, Globe } from 'lucide-react';
 import { UserProfile } from '../types';
-import { GoogleGenAI, Modality } from '@google/genai';
-import { storageService } from '../services/storageService';
-import { aiService } from '../services/aiService';
+import { Modality, GoogleGenAI } from '@google/genai';
+import { chargeVoiceMinute } from '../services/geminiService';
+import { useUserProfile } from '../hooks/queries/useUserProfile';
 
 interface LiveTeacherProps {
   user: UserProfile;
@@ -14,29 +15,9 @@ interface LiveTeacherProps {
 }
 
 // --- CONFIGURATION ---
-const LIVE_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
+const LIVE_MODEL = 'gemini-2.5-flash-native-audio-preview-09-2025';
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
-const COST_PER_MINUTE = 5;
-const INITIAL_BILLING_DELAY = 5000; // 5 secondes
-
-// --- VOIX DISPONIBLES ---
-interface VoiceOption {
-    id: string;
-    name: string;
-    gender: 'M' | 'F' | 'N';
-    description: string;
-    emoji: string;
-}
-
-const AVAILABLE_VOICES: VoiceOption[] = [
-    { id: 'Puck', name: 'Puck', gender: 'M', description: 'Énergique et dynamique', emoji: '⚡' },
-    { id: 'Charon', name: 'Charon', gender: 'M', description: 'Calme et posé', emoji: '🧘' },
-    { id: 'Kore', name: 'Kore', gender: 'F', description: 'Dynamique et claire', emoji: '✨' },
-    { id: 'Fenrir', name: 'Fenrir', gender: 'M', description: 'Grave et autoritaire', emoji: '🦁' },
-    { id: 'Aoede', name: 'Aoede', gender: 'F', description: 'Douce et mélodieuse', emoji: '🎵' },
-    { id: 'Zephyr', name: 'Zephyr', gender: 'N', description: 'Neutre et professionnelle', emoji: '🌬️' },
-];
 
 // --- UTILS AUDIO ---
 const pcmToAudioBuffer = (base64: string, ctx: AudioContext) => {
@@ -91,7 +72,45 @@ const floatTo16BitPCM = (input: Float32Array) => {
     return btoa(binary);
 };
 
+const getDisconnectMessage = (code: number | undefined, reason: string | undefined, ctxState: string) => {
+    let base = "Connexion interrompue";
+    let detail = "";
+
+    switch (code) {
+        case 1000:
+            base = "Session terminée normalement";
+            break;
+        case 1001:
+            base = "Page fermée ou rechargée";
+            break;
+        case 1002:
+            base = "Erreur de protocole";
+            break;
+        case 1006:
+            base = "Perte de connexion réseau";
+            detail = "(WebSocket fermé anormalement)";
+            break;
+        case 1008:
+            base = "Accès refusé (Code 1008)";
+            detail = "Vérifiez votre clé API Gemini ou vos quotas.";
+            break;
+        case 1011:
+            base = "Erreur Serveur Interne";
+            detail = "(Le serveur vocal a rencontré un problème)";
+            break;
+        default:
+            base = `Fermeture inattendue (${code || 'Inconnu'})`;
+    }
+
+    const audioStatus = ctxState !== 'running' ? `[Audio: ${ctxState}]` : '';
+    const reasonText = reason ? `| Raison: "${reason}"` : '';
+    
+    return `${base} ${detail} ${audioStatus} ${reasonText}`.trim();
+};
+
 const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, notify, onShowPayment }) => {
+  const { refetch } = useUserProfile(user.id);
+  
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [subStatus, setSubStatus] = useState('');
   const [volume, setVolume] = useState(0); 
@@ -99,35 +118,69 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
   const [duration, setDuration] = useState(0);
   const [teacherSpeaking, setTeacherSpeaking] = useState(false);
   
-  const [showVoiceSelector, setShowVoiceSelector] = useState(false);
-  const [selectedVoice, setSelectedVoice] = useState<string>(
-      localStorage.getItem('teachermada_preferred_voice') || 'Kore'
-  );
-  
-  const [hasInitialBilling, setHasInitialBilling] = useState(false);
-  const initialBillingTimerRef = useRef<NodeJS.Timeout | null>(null);
-  
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const processorRef = useRef<AudioWorkletNode | null>(null);
   const nextStartTimeRef = useRef(0);
   const isMountedRef = useRef(true);
-  
-  // ID unique pour cet appel (généré au début de la session)
-  const [callId] = useState(() => `call_${user.id}_${Date.now()}`);
+  const activeSessionRef = useRef<any>(null);
+  const isConnectedRef = useRef(false);
+  const hasStartedRef = useRef(false);
+
+  const cleanupAudio = useCallback(() => {
+      // 1. Stop Media Stream Tracks
+      if (mediaStreamRef.current) {
+          mediaStreamRef.current.getTracks().forEach(t => t.stop());
+          mediaStreamRef.current = null;
+      }
+
+      // 2. Disconnect & Nullify Processor
+      if (processorRef.current) {
+          try {
+            processorRef.current.disconnect();
+            processorRef.current.port.onmessage = null;
+          } catch (_e) { /* ignore */ }
+          processorRef.current = null;
+      }
+
+      // 3. Close & Nullify AudioContext
+      if (audioContextRef.current) {
+          try {
+              const state = audioContextRef.current.state;
+              if (state !== 'closed') {
+                  audioContextRef.current.close().catch(() => {});
+              }
+          } catch (_e) { /* ignore */ }
+          audioContextRef.current = null;
+      }
+
+      // 4. Close GenAI Session
+      if (activeSessionRef.current) {
+          try { 
+             activeSessionRef.current.then((s: any) => s.close()).catch(() => {});
+          } catch (_e) {}
+          activeSessionRef.current = null;
+      }
+      
+      isConnectedRef.current = false;
+      setTeacherSpeaking(false);
+  }, []);
+
+  const handleHangup = useCallback(() => {
+      cleanupAudio();
+      if (isMountedRef.current && status !== 'error') onClose();
+  }, [cleanupAudio, onClose, status]);
 
   useEffect(() => {
       isMountedRef.current = true;
       startSession();
       return () => {
           isMountedRef.current = false;
-          if (initialBillingTimerRef.current) {
-              clearTimeout(initialBillingTimerRef.current);
-          }
           handleHangup();
       };
-  }, []);
+  }, []); // Empty dependency array is intended here for mount/unmount logic
 
+  // --- TIMER & BILLING LOGIC ---
   useEffect(() => {
       let interval: any;
       if (status === 'connected') {
@@ -138,354 +191,148 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
       return () => clearInterval(interval);
   }, [status]);
 
+  // Billing Effect : Triggered every 60s
   useEffect(() => {
-      if (status === 'connected' && !hasInitialBilling) {
-          console.log('[Billing] Scheduling initial billing in 5s...');
-          
-          initialBillingTimerRef.current = setTimeout(async () => {
-              console.log('[Billing] Processing initial billing (5 credits)');
-              await processInitialBilling();
-          }, INITIAL_BILLING_DELAY);
+      if (duration > 0 && duration % 60 === 0) {
+          processBilling();
       }
-  }, [status, hasInitialBilling]);
+  }, [duration]);
 
-  useEffect(() => {
-      if (hasInitialBilling && duration > 0 && duration % 60 === 0) {
-          console.log(`[Billing] Processing recurring billing at ${duration}s`);
-          processRecurringBilling();
+  const processBilling = async () => {
+      if (!user) return;
+      const success = await chargeVoiceMinute();
+      if (success) {
+          const { data: updatedUser } = await refetch();
+          if (updatedUser) onUpdateUser(updatedUser);
+          notify(`- 3 Crédits`, "info");
+      } else {
+          notify("Crédits épuisés ! Fin de l'appel.", "error");
+          handleHangup();
       }
-  }, [duration, hasInitialBilling]);
-
-  // Fonction pour raccrocher (était manquante)
-  const hangup = () => {
-    console.log('[Call] Hangup triggered');
-    handleHangup();
-  };
-
-  // ── BILLING FUNCTIONS ──
-  const processInitialBilling = async () => {
-    console.log('[Billing] Processing initial billing (5 credits)');
-    console.log('[Billing] User ID:', user.id);
-    console.log('[Billing] Current credits:', user.credits);
-
-    try {
-        // Appeler Edge Function pour démarrer appel
-        const result = await aiService.startCall(user.id);
-
-        if (!result.success) {
-            console.log('[Billing] ❌ Initial billing FAILED:', result.error);
-            
-            // Raccrocher si crédits insuffisants
-            hangup();
-            
-            notify(result.error || 'Crédits insuffisants pour démarrer l\'appel', 'error');
-            return;
-        }
-
-        console.log('[Billing] ✅ Initial billing SUCCESS');
-        console.log('[Billing] New credits:', result.balance);
-        
-        // Mettre à jour l'utilisateur avec le nouveau solde
-        if (result.balance !== undefined) {
-            onUpdateUser({ ...user, credits: result.balance });
-        }
-        
-        setHasInitialBilling(true);
-        notify('Appel démarré (-5 crédits)', 'success');
-
-    } catch (error: any) {
-        console.error('[Billing] Exception:', error);
-        hangup();
-        notify('Erreur lors de la facturation', 'error');
-    }
-  };
-  
-  const processRecurringBilling = async () => {
-    console.log('[Billing] Processing recurring billing (5 credits)');
-    console.log('[Billing] Call ID:', callId);
-
-    try {
-        // Appeler Edge Function pour minute d'appel
-        const result = await aiService.deductCallMinute(user.id, callId);
-
-        if (!result.success) {
-            console.log('[Billing] ❌ Recurring billing FAILED:', result.error);
-            
-            // Raccrocher si plus de crédits
-            hangup();
-            
-            notify(result.error || 'Crédits insuffisants', 'error');
-            return;
-        }
-
-        console.log('[Billing] ✅ Recurring billing SUCCESS');
-        console.log('[Billing] New credits:', result.balance);
-        
-        // Mettre à jour l'utilisateur avec le nouveau solde
-        if (result.balance !== undefined) {
-            onUpdateUser({ ...user, credits: result.balance });
-        }
-
-    } catch (error: any) {
-        console.error('[Billing] Exception:', error);
-        hangup();
-        notify('Erreur lors de la facturation', 'error');
-    }
-  };
-  
-  const handleVoiceChange = (voiceId: string) => {
-      setSelectedVoice(voiceId);
-      localStorage.setItem('teachermada_preferred_voice', voiceId);
-      notify(`Voix changée : ${AVAILABLE_VOICES.find(v => v.id === voiceId)?.name}`, 'success');
-      setShowVoiceSelector(false);
   };
 
   const startSession = async () => {
-      if (!(await storageService.canRequest(user.id, COST_PER_MINUTE))) {
-          notify(`Il faut ${COST_PER_MINUTE} crédits minimum pour démarrer.`, "error");
+      if (!user || hasStartedRef.current) return;
+      hasStartedRef.current = true;
+      
+      // Ensure clean slate
+      cleanupAudio();
+
+      // 1. Check & Deduct for First Minute immediately
+      const deducted = await chargeVoiceMinute();
+      if (!deducted) {
+          notify(`Il faut des crédits pour démarrer.`, "error");
           onShowPayment();
           onClose();
           return;
       }
+      
+      // Update local user state immediately
+      const { data: updatedUser } = await refetch();
+      if (updatedUser) onUpdateUser(updatedUser);
+      notify(`- 3 Crédits (1ère minute)`, "info");
 
       setStatus('connecting');
       setSubStatus("Initialisation Audio...");
 
       try {
           const AC = window.AudioContext || (window as any).webkitAudioContext;
-          const ctx = new AC(); 
-          await ctx.resume();
+          const ctx = new AC({ sampleRate: OUTPUT_SAMPLE_RATE }); // Force sample rate if possible
+          
+          if (ctx.state === 'suspended') {
+            await ctx.resume();
+          }
+          
           audioContextRef.current = ctx;
           nextStartTimeRef.current = ctx.currentTime + 0.1;
 
           setSubStatus("Recherche serveur...");
           
-          const keys = (process.env.API_KEY || "").split(',').map(k => k.trim()).filter(k => k.length > 10);
-          if (keys.length === 0) throw new Error("Aucune clé API configurée");
-
-          await connectWithRetry(keys, ctx);
+          // Connect to local WebSocket proxy
+          await connectToProxy(ctx);
 
       } catch (e: any) {
-          console.error("Fatal Error", e);
+          if (e.message !== "Accès microphone refusé ou impossible." && !e.message.includes("Microphone")) {
+              console.error("Fatal Error", e);
+          }
           setStatus('error');
           setSubStatus(e.message || "Erreur technique");
+          // Ensure cleanup on error
+          cleanupAudio();
       }
   };
 
-  const connectWithRetry = async (keys: string[], ctx: AudioContext) => {
-      let lastError = null;
+  const connectToProxy = async (ctx: AudioContext) => {
+      if (!user) return;
+      
+      try {
+          // --- PROMPT SYSTÈME STRICT : IMMERSION & CORRECTION ---
+          const sysPrompt = `
+          IDENTITY: You are "${user.preferences?.teacherName || 'TeacherMada'}", a highly skilled native ${user.preferences?.targetLanguage} teacher.
+          CONTEXT: User Level: ${user.preferences?.level || 'Beginner'}.
+          
+          AUDIO INSTRUCTIONS:
+          - **SPEAK SLOWLY AND CLEARLY**. Articulate every word.
+          - Use a warm, patient, and encouraging tone.
+          
+          LANGUAGE RULES:
+          1. **PRIMARY**: Speak 90% in ${user.preferences?.targetLanguage}.
+          2. **FALLBACK**: Use French ONLY for brief explanations if the user is stuck, then switch back immediately.
+          
+          CORRECTION PROTOCOL (CRITICAL):
+          When the user makes a mistake (grammar, pronunciation, structure):
+          1. **❤️ ENCOURAGE**: Start with positive reinforcement (e.g., "Good try!", "Almost there!").
+          2. **✅ CORRECT**: Clearly state the correct version of the phrase.
+          3. **🔄 REPEAT**: Ask the user to repeat the correct version ("Can you say: [Phrase]?").
+          
+          GOAL: Improve the student without reducing their confidence. Focus on progress, not perfection.
+          
+          START: Introduce yourself briefly in ${user.preferences?.targetLanguage}, asking how they are today.
+          `;
 
-      for (const apiKey of keys) {
-          try {
-              console.log("Tentative connexion avec clé ending in...", apiKey.slice(-4));
-              const client = new GoogleGenAI({ apiKey });
-              
-              const targetLang = user.preferences?.targetLanguage || 'English';
-              const userLevel = user.preferences?.level || 'Beginner';
-              
-              const sysPrompt = `
-═══════════════════════════════════════════════════════════════
-🎓 TEACHERMADA - PROFESSIONAL LANGUAGE TEACHER
-═══════════════════════════════════════════════════════════════
+          const apiKey = process.env.GEMINI_API_KEY;
+          if (!apiKey) {
+              throw new Error("Clé API Gemini non configurée dans l'environnement.");
+          }
 
-IDENTITY:
-You are "TeacherMada", an expert ${targetLang} teacher with 30+ years of experience.
-You specialize in immersive, conversational learning with gentle error correction.
+          const ai = new GoogleGenAI({ apiKey });
 
-STUDENT PROFILE:
-- Language: ${targetLang}
-- Level: ${userLevel}
-- Learning Style: Audio-first, conversational practice
-
-═══════════════════════════════════════════════════════════════
-📢 AUDIO & SPEECH INSTRUCTIONS
-═══════════════════════════════════════════════════════════════
-
-VOICE QUALITY:
-✓ Speak SLOWLY and CLEARLY - articulate every syllable
-✓ Use natural pauses between sentences (1-2 seconds)
-✓ Warm, encouraging, patient tone at all times
-✓ Slightly slower pace for Beginner/Intermediate levels
-✓ Normal conversational pace for Advanced
-
-AUDIO TECHNIQUES:
-✓ Emphasize KEY WORDS for clarity
-✓ Use pitch variation to maintain engagement
-✓ Repeat important phrases naturally
-✓ Ask "Did you understand?" after complex explanations
-
-═══════════════════════════════════════════════════════════════
-🌍 LANGUAGE IMMERSION RULES
-═══════════════════════════════════════════════════════════════
-
-PRIMARY RULE:
-→ Speak 95% in ${targetLang}
-→ ONLY use French if:
-   • Student explicitly asks "Comment dit-on...?"
-   • Student is completely stuck after 2-3 attempts
-   • Explaining complex grammar concepts
-
-LANGUAGE SCAFFOLDING:
-→ Beginner: Use simple sentences, common words, slower pace
-→ Intermediate: Mix simple and complex structures, introduce idioms
-→ Advanced: Natural conversation, complex topics, cultural nuances
-
-═══════════════════════════════════════════════════════════════
-✅ ERROR CORRECTION PROTOCOL (CRITICAL)
-═══════════════════════════════════════════════════════════════
-
-When student makes a mistake:
-
-STEP 1 - POSITIVE REINFORCEMENT (Always start here)
-   Examples:
-   • "Good effort!" / "I like your thinking!"
-   • "You're on the right track!"
-   • "Almost perfect!"
-
-STEP 2 - GENTLE CORRECTION (Clear but kind)
-   Format: "We say: [CORRECT PHRASE]"
-   Examples:
-   • "We say: 'I am going' not 'I go'"
-   • "The correct way is: 'She has been'"
-   
-STEP 3 - REPEAT REQUEST (Essential for learning)
-   • "Can you try saying: [CORRECT PHRASE]?"
-   • "Let's practice together: [CORRECT PHRASE]"
-   
-STEP 4 - BRIEF EXPLANATION (Only if needed)
-   • Keep it under 15 words
-   • Focus on the rule, not the theory
-   Example: "We use 'am going' for actions happening now"
-
-NEVER:
-✗ Say "No" or "Wrong" directly
-✗ Interrupt mid-sentence
-✗ Overcorrect minor mistakes (focus on major errors)
-✗ Give long grammatical explanations
-
-═══════════════════════════════════════════════════════════════
-🎯 CONVERSATION FLOW
-═══════════════════════════════════════════════════════════════
-
-SESSION STRUCTURE:
-
-1. GREETING (First 30s)
-   → Introduce yourself in ${targetLang}
-   → Ask: "How are you today?"
-   → Make student feel comfortable
-
-2. TOPIC INTRODUCTION (After student responds)
-   → Choose topics based on level:
-      • Beginner: Daily routines, hobbies, food, family
-      • Intermediate: Travel, work, opinions, past experiences
-      • Advanced: Abstract concepts, debates, cultural topics
-   
-3. ACTIVE CONVERSATION (Main session)
-   → Ask open-ended questions
-   → Listen actively to student responses
-   → Gently correct errors using protocol above
-   → Build on what student says (active listening)
-   → Introduce 2-3 new vocabulary words per minute
-   
-4. SILENCE HANDLING
-   → If student is silent for 5+ seconds:
-      "Take your time! What would you like to talk about?"
-   → If still silent:
-      "Should I ask you a question to get started?"
-
-═══════════════════════════════════════════════════════════════
-📚 TEACHING TECHNIQUES
-═══════════════════════════════════════════════════════════════
-
-VOCABULARY BUILDING:
-→ Introduce new words IN CONTEXT
-→ Use simple definitions in ${targetLang}
-→ Give 1-2 example sentences
-→ Ask student to use the word
-
-PRONUNCIATION HELP:
-→ Break difficult words into syllables
-→ Demonstrate correct pronunciation slowly
-→ Ask student to repeat 2-3 times
-→ Praise progress ("Much better!")
-
-ENGAGEMENT:
-→ Ask follow-up questions
-→ Share relevant cultural facts
-→ Use humor (appropriate for level)
-→ Celebrate small victories
-
-═══════════════════════════════════════════════════════════════
-🎓 LEVEL-SPECIFIC ADAPTATIONS
-═══════════════════════════════════════════════════════════════
-
-BEGINNER:
-• Use present tense primarily
-• Simple subject-verb-object sentences
-• High-frequency vocabulary (top 500 words)
-• Repeat key phrases naturally
-• Visual descriptions when possible
-
-INTERMEDIATE:
-• Mix tenses (past, present, future)
-• Compound sentences
-• Common idioms and expressions
-• Encourage longer responses
-• Introduce subjunctive/conditional
-
-ADVANCED:
-• All tenses and moods
-• Abstract discussions
-• Idiomatic expressions
-• Debate and opinion exchange
-• Cultural and literary references
-
-═══════════════════════════════════════════════════════════════
-⚡ QUICK REFERENCE
-═══════════════════════════════════════════════════════════════
-
-GOLDEN RULES:
-1. Always be encouraging
-2. Correct gently, not harshly
-3. Speak 95% ${targetLang}, 5% French
-4. Listen actively - build on student's words
-5. Make learning fun and low-stress
-6. You are a natural human professor, not an AI
-
-YOUR GOAL:
-Build student's confidence and fluency through natural conversation,
-not through traditional classroom drilling.
-
-NOW: Start the session with a warm greeting in ${targetLang}!
-═══════════════════════════════════════════════════════════════
-              `;
-
-              const session = await client.live.connect({
-                  model: LIVE_MODEL,
-                  config: {
-                      responseModalities: [Modality.AUDIO],
-                      systemInstruction: { parts: [{ text: sysPrompt }] },
-                      speechConfig: {
-                          voiceConfig: { 
-                              prebuiltVoiceConfig: { 
-                                  voiceName: selectedVoice
-                              } 
-                          }
+          const sessionPromise = ai.live.connect({
+              model: LIVE_MODEL,
+              config: {
+                  responseModalities: [Modality.AUDIO],
+                  systemInstruction: { parts: [{ text: sysPrompt }] },
+                  speechConfig: {
+                      voiceConfig: { prebuiltVoiceConfig: { voiceName: user.preferences?.voiceName || 'Kore' } }
+                  }
+              },
+              callbacks: {
+                  onopen: () => {
+                      if (isMountedRef.current) {
+                          isConnectedRef.current = true;
+                          setStatus('connected');
+                          setSubStatus("En Ligne");
+                          
+                          // Send initial greeting trigger
+                          sessionPromise.then((s: any) => {
+                              s.sendRealtimeInput({
+                                  media: {
+                                      mimeType: "audio/pcm;rate=16000",
+                                      data: "" // Empty audio to trigger start if needed, or rely on system prompt
+                                  }
+                              });
+                              // Note: sending text directly via sendRealtimeInput might not be supported as 'text' property.
+                              // The system prompt should handle the greeting.
+                          }).catch(() => {});
                       }
                   },
-                  callbacks: {
-                      onopen: () => {
-                          if (isMountedRef.current) {
-                              setStatus('connected');
-                              setSubStatus("En Ligne");
-                              console.log('[Session] ✅ Connected successfully');
-                          }
-                      },
-                      onmessage: async (msg: any) => {
+                  onmessage: async (msg) => {
+                      if (!isMountedRef.current) return;
+                      try {
                           const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
                           if (audioData) {
                               setTeacherSpeaking(true);
-                              setSubStatus("TeacherMada parle...");
+                              setSubStatus(`${user.preferences?.teacherName || 'TeacherMada'} parle...`);
                               await playAudioChunk(audioData, ctx);
                           }
                           
@@ -496,48 +343,125 @@ NOW: Start the session with a warm greeting in ${targetLang}!
                                   nextStartTimeRef.current = ctx.currentTime;
                               }
                           }
-                      },
-                      onclose: () => {
-                          console.log("[Session] Closed by server");
-                          handleHangup();
-                      },
-                      onerror: (err) => {
-                          console.error("[Session] Error:", err);
+                      } catch (e) {
+                          console.error("Error parsing WS message", e);
+                      }
+                  },
+                  onclose: (e) => {
+                      console.log("Session closed remote", e);
+                      cleanupAudio();
+                      if (isMountedRef.current) {
+                          setStatus('error');
+                          setSubStatus("Connexion fermée");
+                      }
+                  },
+                  onerror: (err) => {
+                      console.error("Session error", err);
+                      cleanupAudio();
+                      if (isMountedRef.current) {
+                          setStatus('error');
+                          setSubStatus("Erreur de connexion");
                       }
                   }
-              });
+              }
+          });
 
-              await startMicrophone(ctx, session);
-              return;
+          activeSessionRef.current = sessionPromise; // Store promise as session
+          await startMicrophone(ctx, sessionPromise);
 
-          } catch (e: any) {
-              console.warn("Echec connexion clé", apiKey.slice(-4), e);
-              lastError = e;
+      } catch (e: any) {
+          // CRITICAL: Do not retry if it's a microphone permission issue
+          if (e.message.includes("Microphone") || e.message.includes("microphone") || e.name === 'NotAllowedError' || e.name === 'NotFoundError') {
+              throw e;
           }
+          console.warn("Connection failed", e);
+          throw e;
       }
-      throw lastError || new Error("Serveurs saturés (Toutes clés HS)");
   };
+
 
   const startMicrophone = async (ctx: AudioContext, session: any) => {
       try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-              audio: {
-                  channelCount: 1,
-                  echoCancellation: true,
-                  noiseSuppression: true,
-                  autoGainControl: true,
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+              throw new Error("Votre navigateur ne supporte pas l'accès au microphone.");
+          }
+
+          let stream;
+          try {
+              stream = await navigator.mediaDevices.getUserMedia({
+                  audio: {
+                      channelCount: 1,
+                      echoCancellation: true,
+                      noiseSuppression: true,
+                      autoGainControl: true,
+                  }
+              });
+          } catch (e) {
+              console.warn("HQ Mic failed, trying fallback...", e);
+              try {
+                  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              } catch (e2) {
+                  throw new Error("Accès microphone refusé ou impossible.");
               }
-          });
+          }
+
           mediaStreamRef.current = stream;
 
           const source = ctx.createMediaStreamSource(stream);
-          const processor = ctx.createScriptProcessor(4096, 1, 1);
-          processorRef.current = processor;
+          
+          // AudioWorklet Implementation
+          const workletCode = `
+            class AudioCaptureProcessor extends AudioWorkletProcessor {
+              constructor() {
+                super();
+                this.bufferSize = 2048; // Buffer ~46ms at 44.1kHz (reduced from 4096 to lower latency)
+                this._buffer = new Float32Array(this.bufferSize);
+                this._bytesWritten = 0;
+              }
+              
+              process(inputs, outputs, parameters) {
+                const input = inputs[0];
+                if (input && input.length > 0 && input[0].length > 0) {
+                  const inputChannel = input[0];
+                  
+                  // Fill buffer
+                  for (let i = 0; i < inputChannel.length; i++) {
+                    this._buffer[this._bytesWritten++] = inputChannel[i];
+                    
+                    // Flush when full
+                    if (this._bytesWritten >= this.bufferSize) {
+                      this.port.postMessage(this._buffer.slice());
+                      this._bytesWritten = 0;
+                    }
+                  }
+                }
+                return true;
+              }
+            }
+            registerProcessor('audio-capture-processor', AudioCaptureProcessor);
+          `;
+          const blob = new Blob([workletCode], { type: 'application/javascript' });
+          const workletUrl = URL.createObjectURL(blob);
+          
+          // Check context state before adding module
+          if ((ctx.state as string) === 'closed') {
+              throw new Error("AudioContext is closed");
+          }
+          
+          await ctx.audioWorklet.addModule(workletUrl);
 
-          processor.onaudioprocess = (e) => {
-              if (isMuted) return;
+          // Check context state again after await
+          if ((ctx.state as string) === 'closed') {
+              throw new Error("AudioContext is closed");
+          }
 
-              const inputData = e.inputBuffer.getChannelData(0);
+          const workletNode = new AudioWorkletNode(ctx, 'audio-capture-processor');
+          processorRef.current = workletNode;
+
+          workletNode.port.onmessage = (e) => {
+              if (isMuted || !isConnectedRef.current) return;
+
+              const inputData = e.data as Float32Array;
               
               let sum = 0;
               for (let i = 0; i < inputData.length; i += 10) sum += inputData[i] * inputData[i];
@@ -545,27 +469,30 @@ NOW: Start the session with a warm greeting in ${targetLang}!
               
               setVolume(v => v * 0.8 + (rms * 100) * 0.2);
 
-              const downsampledData = downsampleBuffer(inputData, e.inputBuffer.sampleRate, INPUT_SAMPLE_RATE);
+              const downsampledData = downsampleBuffer(inputData, ctx.sampleRate, INPUT_SAMPLE_RATE);
               const base64Audio = floatTo16BitPCM(downsampledData);
               
               try {
-                  session.sendRealtimeInput({
-                      media: {
-                          mimeType: `audio/pcm;rate=${INPUT_SAMPLE_RATE}`,
-                          data: base64Audio
-                      }
-                  });
-              } catch (err) {}
+                  // Send audio data to GoogleGenAI
+                  session.then((s: any) => {
+                      s.sendRealtimeInput({
+                          media: {
+                              mimeType: `audio/pcm;rate=${INPUT_SAMPLE_RATE}`,
+                              data: base64Audio
+                          }
+                      });
+                  }).catch(() => {});
+              } catch (_err) {}
           };
 
-          source.connect(processor);
+          source.connect(workletNode);
           const muteNode = ctx.createGain();
           muteNode.gain.value = 0;
-          processor.connect(muteNode);
+          workletNode.connect(muteNode);
           muteNode.connect(ctx.destination);
 
-      } catch (e) {
-          throw new Error("Microphone inaccessible");
+      } catch (e: any) {
+          throw new Error(e.message || "Microphone inaccessible");
       }
   };
 
@@ -588,29 +515,27 @@ NOW: Start the session with a warm greeting in ${targetLang}!
       }
   };
 
-  const handleHangup = () => {
-      if (initialBillingTimerRef.current) {
-          clearTimeout(initialBillingTimerRef.current);
-      }
-      
-      if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach(t => t.stop());
-      if (processorRef.current) processorRef.current.disconnect();
-      if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
-      
-      mediaStreamRef.current = null;
-      processorRef.current = null;
-      audioContextRef.current = null;
-      
-      if (isMountedRef.current && status !== 'error') onClose();
-  };
-
+  // UI SCALING
   const scale = 1 + (volume / 20); 
 
+  if (!user) return null;
+
   return (
-      <div className="fixed inset-0 z-[150] bg-[#050505] flex flex-col font-sans overflow-hidden">
+      <div className="fixed inset-0 z-[150] bg-[#050505] flex flex-col font-sans overflow-hidden no-scrollbar">
+          <style>{`
+              .no-scrollbar::-webkit-scrollbar {
+                  display: none;
+              }
+              .no-scrollbar {
+                  -ms-overflow-style: none;
+                  scrollbar-width: none;
+              }
+          `}</style>
           
+          {/* Background Ambient Glow */}
           <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full blur-[150px] pointer-events-none transition-colors duration-1000 ${teacherSpeaking ? 'bg-emerald-900/40' : 'bg-indigo-900/30'}`}></div>
 
+          {/* Header */}
           <div className="p-8 pt-12 text-center relative z-10 flex flex-col items-center">
               <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-md border mb-6 transition-all shadow-lg ${
                   status === 'connected' 
@@ -623,81 +548,25 @@ NOW: Start the session with a warm greeting in ${targetLang}!
                   </span>
               </div>
               
-              <h2 className="text-3xl md:text-4xl font-black text-white tracking-tight drop-shadow-md">TeacherMada</h2>
+              <h2 className="text-3xl md:text-4xl font-black text-white tracking-tight drop-shadow-md">{user.preferences?.teacherName || 'TeacherMada'}</h2>
               <div className="flex items-center gap-2 mt-2 text-indigo-400 font-medium">
                   <Globe className="w-4 h-4" />
-                  <span className="text-sm">{user.preferences?.targetLanguage} — {user.preferences?.level}</span>
+                  <span className="text-sm">Immersion {user.preferences?.targetLanguage} • {user.preferences?.level}</span>
               </div>
               
-              <button
-                  onClick={() => setShowVoiceSelector(!showVoiceSelector)}
-                  className="mt-3 flex items-center gap-2 px-4 py-2 bg-slate-800/60 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-bold text-slate-300 transition-all"
-              >
-                  <User className="w-3 h-3"/>
-                  Voix: {AVAILABLE_VOICES.find(v => v.id === selectedVoice)?.name}
-              </button>
-              
+              {/* Timer Only */}
               <div className="flex items-center gap-3 mt-4">
                   <p className="text-slate-500 font-mono text-xs tracking-widest bg-slate-900/80 px-3 py-1 rounded-lg border border-slate-800 flex items-center gap-2">
                       <Clock className="w-3 h-3"/>
                       {Math.floor(duration/60).toString().padStart(2,'0')}:{(duration%60).toString().padStart(2,'0')}
                   </p>
-                  {hasInitialBilling && (
-                      <p className="text-amber-400 font-mono text-xs tracking-widest bg-amber-900/20 px-3 py-1 rounded-lg border border-amber-800 flex items-center gap-2">
-                          <Coins className="w-3 h-3"/>
-                          -{COST_PER_MINUTE * (Math.floor(duration / 60) + 1)} crédits
-                      </p>
-                  )}
               </div>
           </div>
 
-          {showVoiceSelector && (
-              <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                  <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 max-w-md w-full shadow-2xl">
-                      <h3 className="text-white font-black text-lg mb-4 flex items-center gap-2">
-                          <User className="w-5 h-5"/>
-                          Choisir la Voix
-                      </h3>
-                      {status === 'connected' && (
-                          <div className="mb-4 p-3 bg-amber-900/20 border border-amber-600/30 rounded-xl">
-                              <p className="text-xs text-amber-300 flex items-center gap-2">
-                                  <AlertCircle className="w-4 h-4"/>
-                                  La voix sera appliquée au <strong>prochain appel</strong>
-                              </p>
-                          </div>
-                      )}
-                      <div className="grid grid-cols-2 gap-3 mb-6">
-                          {AVAILABLE_VOICES.map(voice => (
-                              <button
-                                  key={voice.id}
-                                  onClick={() => handleVoiceChange(voice.id)}
-                                  className={`p-4 rounded-2xl border-2 transition-all text-left ${
-                                      selectedVoice === voice.id
-                                          ? 'border-indigo-500 bg-indigo-500/20'
-                                          : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'
-                                  }`}
-                              >
-                                  <div className="text-2xl mb-2">{voice.emoji}</div>
-                                  <div className="font-bold text-white text-sm">{voice.name}</div>
-                                  <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">
-                                      {voice.gender === 'M' ? 'Masculin' : voice.gender === 'F' ? 'Féminin' : 'Neutre'}
-                                  </div>
-                                  <div className="text-xs text-slate-500">{voice.description}</div>
-                              </button>
-                          ))}
-                      </div>
-                      <button
-                          onClick={() => setShowVoiceSelector(false)}
-                          className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all"
-                      >
-                          Fermer
-                      </button>
-                  </div>
-              </div>
-          )}
-
+          {/* Visualizer Central */}
           <div className="flex-1 flex flex-col items-center justify-center relative w-full mb-10">
               
+              {/* Effets d'Ondes Visuelles (User Speaking) - Concentric Circles */}
               {!teacherSpeaking && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                         <div className="absolute w-48 h-48 rounded-full border border-indigo-500/60 transition-transform duration-75 ease-out" 
@@ -711,6 +580,7 @@ NOW: Start the session with a warm greeting in ${targetLang}!
                   </div>
               )}
 
+              {/* Effets Pulsation (Teacher Speaking) - Glowing Aura */}
               {teacherSpeaking && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                         <div className="absolute w-52 h-52 rounded-full bg-emerald-500/20 animate-ping"></div>
@@ -719,6 +589,7 @@ NOW: Start the session with a warm greeting in ${targetLang}!
                   </div>
               )}
 
+              {/* Avatar Central */}
               <div className={`relative z-20 w-48 h-48 rounded-full bg-[#0F1422] flex items-center justify-center transition-all duration-500 shadow-2xl ${
                   teacherSpeaking 
                   ? 'scale-110 border-4 border-emerald-500 shadow-[0_0_80px_rgba(16,185,129,0.4)]' 
@@ -726,16 +597,18 @@ NOW: Start the session with a warm greeting in ${targetLang}!
               }`}>
                   <img src="https://i.ibb.co/B2XmRwmJ/logo.png" className="w-32 h-32 object-contain drop-shadow-lg" alt="AI Teacher" />
                   
+                  {/* Status Indicator inside Avatar */}
                   <div className={`absolute bottom-4 right-4 w-7 h-7 rounded-full border-4 border-[#0F1422] flex items-center justify-center transition-colors ${teacherSpeaking ? 'bg-emerald-500' : 'bg-indigo-500'}`}>
                       {teacherSpeaking ? <Activity className="w-3.5 h-3.5 text-white animate-bounce" /> : <Mic className="w-3.5 h-3.5 text-white" />}
                   </div>
               </div>
 
+              {/* Status Textuel Dynamique */}
               <div className="mt-16 h-10 flex items-center gap-3 px-6 py-2 rounded-full bg-white/5 backdrop-blur-md border border-white/10 transition-all duration-300 shadow-xl">
                   {teacherSpeaking ? (
                       <>
                         <Volume2 className="w-4 h-4 text-emerald-400 animate-pulse" />
-                        <span className="text-emerald-100 text-xs font-bold uppercase tracking-wide">TeacherMada parle...</span>
+                        <span className="text-emerald-100 text-xs font-bold uppercase tracking-wide">{user.preferences?.teacherName || 'TeacherMada'} parle...</span>
                       </>
                   ) : (
                       <>
@@ -748,6 +621,7 @@ NOW: Start the session with a warm greeting in ${targetLang}!
               </div>
           </div>
 
+          {/* Erreur overlay */}
           {status === 'error' && (
               <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center z-50 animate-fade-in">
                   <div className="bg-[#1E293B] p-8 rounded-3xl border border-red-500/30 text-center max-w-xs shadow-2xl">
@@ -761,6 +635,7 @@ NOW: Start the session with a warm greeting in ${targetLang}!
               </div>
           )}
 
+          {/* Contrôles Glassmorphism */}
           <div className="p-8 pb-12 flex items-center justify-center gap-8 relative z-10">
               <button 
                   onClick={() => setIsMuted(!isMuted)}
@@ -774,12 +649,13 @@ NOW: Start the session with a warm greeting in ${targetLang}!
               </button>
 
               <button 
-                  onClick={hangup}
+                  onClick={handleHangup}
                   className="w-24 h-24 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center shadow-[0_0_40px_rgba(239,68,68,0.4)] transition-all hover:scale-105 active:scale-95 group border-4 border-red-400/50"
               >
                   <Phone className="w-10 h-10 text-white fill-current rotate-[135deg] group-hover:animate-pulse" />
               </button>
 
+              {/* Bouton Speaker fictif pour symétrie */}
               <div className="p-6 rounded-full bg-slate-800/40 text-slate-600 border border-slate-800/50 cursor-default">
                   <Volume2 className="w-6 h-6"/>
               </div>

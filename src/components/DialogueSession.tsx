@@ -1,10 +1,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { memo } from 'react'; //memo
 import { UserProfile, ChatMessage } from '../types';
 import { generateRoleplayResponse } from '../services/geminiService';
-import { storageService } from '../services/storageService';
-import { creditService, CREDIT_COSTS } from '../services/creditService';
+import { CREDIT_COSTS } from '../services/creditService';
+import { useUserProfile } from '../hooks/queries/useUserProfile';
 import { X, Send, Mic, MessageCircle, Clock, GraduationCap, ShoppingBag, Plane, Stethoscope, Utensils, School, XCircle, Trophy, AlertTriangle, Loader2, Play, Briefcase, Info, ArrowLeft, RefreshCcw, BookOpen, Sparkles, Languages, BarChart, ArrowRight, Settings2, Globe, ChevronRight } from 'lucide-react';
 
 interface DialogueSessionProps {
@@ -49,6 +48,8 @@ const getSpeechLang = (targetLang: string) => {
 };
 
 const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpdateUser, notify, onShowPayment }) => {
+  const { refetch } = useUserProfile(user.id);
+
   // Flow State: 'setup' -> 'selection' -> 'intro' -> 'chat' -> 'score'
   const [step, setStep] = useState<'setup' | 'selection' | 'intro' | 'chat'>('setup');
   
@@ -85,68 +86,6 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, lastCorrection, isLoading]);
 
-  
-// Dans src/components/DialogueSession.tsx
-
-// AJOUTER après les autres useEffect :
-
-// Sauvegarde automatique toutes les 30s
-useEffect(() => {
-  if (step !== 'chat' || messages.length === 0) return;
-
-  const saveInterval = setInterval(() => {
-    const sessionData = {
-      scenario: scenario?.id,
-      messages,
-      secondsActive,
-      selectedLang,
-      selectedLevel,
-      timestamp: Date.now(),
-    };
-
-    localStorage.setItem(
-      `dialogue_session_${user.id}`,
-      JSON.stringify(sessionData)
-    );
-    console.log('[Dialogue] Session sauvegardée ✓');
-  }, 30000);
-
-  return () => clearInterval(saveInterval);
-}, [messages, secondsActive, step, scenario, selectedLang, selectedLevel, user.id]);
-
-// Restauration au montage
-useEffect(() => {
-  const savedSession = localStorage.getItem(`dialogue_session_${user.id}`);
-  if (savedSession) {
-    try {
-      const data = JSON.parse(savedSession);
-      const age = Date.now() - data.timestamp;
-      
-      if (age < 24 * 60 * 60 * 1000) { // < 24h
-        const restore = window.confirm(
-          'Session précédente trouvée. Continuer où vous étiez ?'
-        );
-        
-        if (restore) {
-          setMessages(data.messages);
-          setSecondsActive(data.secondsActive);
-          setSelectedLang(data.selectedLang);
-          setSelectedLevel(data.selectedLevel);
-          const foundScenario = SCENARIOS.find(s => s.id === data.scenario);
-          if (foundScenario) setScenario(foundScenario);
-          setStep('chat');
-        } else {
-          localStorage.removeItem(`dialogue_session_${user.id}`);
-        }
-      }
-    } catch (error) {
-      console.error('Erreur restauration:', error);
-    }
-  }
-}, [user.id]);
-
-
-  
   // --- Handlers ---
 
   const confirmSetup = () => {
@@ -173,7 +112,7 @@ useEffect(() => {
   const startSession = async () => {
       if (!scenario) return;
       
-      const allowed = await creditService.checkBalance(user.id, CREDIT_COSTS.DIALOGUE_MESSAGE);
+      const allowed = user.credits >= CREDIT_COSTS.DIALOGUE_MESSAGE;
       
       if (allowed) {
           setStep('chat');
@@ -190,7 +129,7 @@ useEffect(() => {
                   timestamp: Date.now()
               }]);
               
-              const u = storageService.getLocalUser();
+              const { data: u } = await refetch();
               if (u) onUpdateUser(u);
 
           } catch (e) {
@@ -250,7 +189,7 @@ useEffect(() => {
       setIsLoading(true);
       setLastCorrection(null);
 
-      if (!(await creditService.checkBalance(user.id, CREDIT_COSTS.DIALOGUE_MESSAGE))) {
+      if (user.credits < CREDIT_COSTS.DIALOGUE_MESSAGE) {
           notify("Crédits insuffisants.", 'error');
           onShowPayment();
           setIsLoading(false);
@@ -268,7 +207,7 @@ useEffect(() => {
               return;
           }
 
-          const updatedUser = storageService.getLocalUser();
+          const { data: updatedUser } = await refetch();
           if (updatedUser) onUpdateUser(updatedUser);
 
           if (result.correction) {
@@ -296,19 +235,13 @@ useEffect(() => {
           const sessionUser = getSessionUser();
           const result = await generateRoleplayResponse(messages, scenario.prompt, sessionUser, true);
           
-          const updatedUser = storageService.getLocalUser();
+          const { data: updatedUser } = await refetch();
           if (updatedUser) onUpdateUser(updatedUser);
 
           setFinalScore({
               score: result.score || 0,
               feedback: result.feedback || "Bravo pour ta participation !"
           });
-          
-          const freshUser = storageService.getLocalUser();
-          const userWithStats = { ...(freshUser || user) };
-          
-          await storageService.saveUserProfile(userWithStats);
-          onUpdateUser(userWithStats);
 
       } catch (e) {
           setFinalScore({ score: 0, feedback: "Erreur lors de l'évaluation." });
@@ -537,5 +470,4 @@ useEffect(() => {
   );
 };
 
-//export default DialogueSession;
-export default memo(DialogueSession);
+export default DialogueSession;

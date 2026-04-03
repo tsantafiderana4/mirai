@@ -1,3 +1,4 @@
+
 export type UserRole = 'user' | 'admin';
 export type VoiceName = 'Zephyr' | 'Puck' | 'Charon' | 'Kore' | 'Fenrir';
 
@@ -84,7 +85,6 @@ export interface UserProfile {
   id: string;
   username: string;
   email?: string;
-  phoneNumber?: string; // ✅ AJOUT
   role: UserRole;
   credits: number;
   preferences: UserPreferences | null;
@@ -153,16 +153,17 @@ export interface ExamResult {
 export interface Certificate {
   id: string;
   userId: string;
-  userName: string;
+  userName?: string;
   userFullName?: string;
   language: string;
   level: string;
   issueDate: number;
   examId: string;
-  validationHash: string;
-  qrCodeData: string;
-  score: number;
+  validationHash?: string;
+  qrCodeData?: string;
+  score?: number;
   globalScore?: number;
+  certificateUrl?: string;
   skillScores?: {
       reading: number;
       writing: number;
