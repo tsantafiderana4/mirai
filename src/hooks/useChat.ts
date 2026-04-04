@@ -4,7 +4,7 @@ import { sendMessageStream } from '../services/geminiService';
 import { CREDIT_COSTS } from '../services/creditService';
 import { useTranslation } from '../contexts/LanguageContext';
 
-export const useChat = (user: UserProfile | null, session: LearningSession | null, updateSession: (s: LearningSession) => Promise<void>, notify: (m: string, t?: string) => void, onShowPayment: () => void) => {
+export const useChat = (user: UserProfile | null, session: LearningSession | null, updateSession: (s: LearningSession) => Promise<any>, notify: (m: string, t?: string) => void, onShowPayment: () => void) => {
     const [messages, setMessages] = useState<ChatMessage[]>(session?.messages || []);
     const [isStreaming, setIsStreaming] = useState(false);
     const { t } = useTranslation();

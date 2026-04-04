@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Phone, ArrowLeft, Sun, Moon, Zap, ChevronDown, Repeat, MessageCircle, Brain, Loader2, AlertTriangle, Play, BookOpen, Trophy, Cloud, CloudOff, CloudLightning, Award } from 'lucide-react';
+import { Phone, ArrowLeft, Sun, Moon, Zap, ChevronDown, Repeat, MessageCircle, Brain, Loader2, AlertTriangle, Play, BookOpen, Trophy, Cloud, CloudOff, CloudLightning, Award, Check, Volume2 } from 'lucide-react';
 import { ExplanationLanguage } from '../types';
 import { ChatMessage, LearningSession } from '../types';
 import { generateText } from '../services/geminiService';
@@ -65,6 +65,7 @@ const ChatInterface: React.FC<Props> = ({
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('tm_theme') === 'dark');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshSuccess, setRefreshSuccess] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('synced');
   const [openGuideItem, setOpenGuideItem] = useState<string | null>('start_lesson');
   
   const LOADING_PHRASES = useMemo(() => [
@@ -96,6 +97,7 @@ const ChatInterface: React.FC<Props> = ({
 
   const handleRefresh = async () => {
       setIsRefreshing(true);
+      setSyncStatus('syncing');
       try {
           if (user && user.preferences) {
                const { data: s } = await refetchSession();
@@ -107,9 +109,11 @@ const ChatInterface: React.FC<Props> = ({
                if (updatedUser) setUser(updatedUser);
           }
           setRefreshSuccess(true);
+          setSyncStatus('synced');
           setTimeout(() => setRefreshSuccess(false), 2000);
       } catch (e) {
           console.error(e);
+          setSyncStatus('error');
       } finally {
           setIsRefreshing(false);
       }
@@ -121,22 +125,6 @@ const ChatInterface: React.FC<Props> = ({
       // Removed intelligenceService analysis
       // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.length]);
-
-  // Loading Text Cycle
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | undefined;
-    if (isStreaming) {
-      setLoadingText(LOADING_PHRASES[0]);
-      let index = 0;
-      interval = setInterval(() => {
-        index = (index + 1) % LOADING_PHRASES.length;
-        setLoadingText(LOADING_PHRASES[index]);
-      }, 2500);
-    }
-    return () => {
-        if (interval) clearInterval(interval);
-    };
-  }, [isStreaming, LOADING_PHRASES]);
 
   const handleVoiceCallClick = async () => {
       if (!user) return;
