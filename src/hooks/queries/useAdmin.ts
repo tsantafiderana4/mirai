@@ -46,7 +46,7 @@ export const useAdmin = () => {
         queryFn: async () => {
             const { data, error } = await supabase.from('system_settings').select('*').single();
             if (error && error.code !== 'PGRST116') throw error;
-            return data ? data.settings as SystemSettings : {
+            return (data && data.settings) ? data.settings as SystemSettings : {
                 creditPrice: 10,
                 validTransactionRefs: [],
                 adminContact: { telma: '', airtel: '', orange: '' },

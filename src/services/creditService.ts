@@ -1,5 +1,4 @@
-// Ce fichier ne contient plus que les constantes de coûts.
-// La logique de déduction est désormais gérée côté serveur via les Edge Functions.
+import { supabase } from "../lib/supabase";
 
 export const CREDIT_COSTS = {
   LESSON: 2,
@@ -12,3 +11,15 @@ export const CREDIT_COSTS = {
   EXAM: 100,
   CERTIFICATE: 100,
 };
+
+export async function deductCredits(amount: number, userId: string): Promise<number | null> {
+    const { data, error } = await supabase.rpc('consume_credits', { p_user_id: userId, p_amount: amount });
+    if (error) {
+        console.error("RPC consume_credits failed:", error);
+        return null;
+    }
+    
+    // Fetch new balance
+    const { data: profile } = await supabase.from('profiles').select('credits').eq('id', userId).single();
+    return profile?.credits || 0;
+}

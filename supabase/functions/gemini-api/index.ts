@@ -46,16 +46,27 @@ Deno.serve(async (req) => {
     const cost = COSTS[action] || 0
     let newBalance: number | null = null;
     if (cost > 0) {
-      const { data, error: rpcError } = await supabaseClient.rpc('consume_credits', { p_amount: cost })
-      newBalance = data;
+      const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: 'Utilisateur non authentifié.' }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+
+      const { data, error: rpcError } = await supabaseClient.rpc('consume_credits', { p_user_id: user.id, p_amount: cost })
       
-      if (rpcError) {
-        console.error('[Billing Error]', rpcError)
+      if (rpcError || data === false) {
+        console.error('[Billing Error]', rpcError || 'Insufficient credits')
         return new Response(JSON.stringify({ error: 'Crédits insuffisants ou accès refusé.' }), {
           status: 402,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
       }
+      
+      // Fetch new balance
+      const { data: profile } = await supabaseClient.from('profiles').select('credits').eq('id', user.id).single();
+      newBalance = profile?.credits || 0;
     }
 
     if (action === 'charge_voice_minute') {

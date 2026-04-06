@@ -3,6 +3,7 @@ import { SYSTEM_PROMPT_TEMPLATE, SUPPORT_AGENT_PROMPT } from "../constants";
 import { supabase, supabaseUrl, supabaseAnonKey } from "../lib/supabase";
 import { useAppStore } from '../store/useAppStore';
 import { GoogleGenAI, Modality, Type } from "@google/genai";
+import { deductCredits } from "./creditService";
 
 const SUPPORT_QUOTA_KEY = 'tm_support_quota';
 
@@ -138,20 +139,14 @@ export async function* sendMessageStream(
       console.log("[Gemini] Stream completed successfully.");
 
       // Deduct credits (1 credit for text generation)
-      const { data: newCredits, error: rpcError } = await supabase.rpc('consume_credits', { p_amount: 1 });
-      if (rpcError) {
-          console.error('[Billing Error]', rpcError);
-          // We don't throw here because the stream already completed successfully
-      } else if (newCredits !== null) {
-          if (typeof newCredits === 'number') {
-              useAppStore.getState().updateUserCredits(newCredits);
-          } else if (typeof (newCredits as any).current_balance === 'number') {
-              useAppStore.getState().updateUserCredits((newCredits as any).current_balance);
-          }
+      const newCredits = await deductCredits(1, user.id);
+      if (newCredits !== null) {
+          useAppStore.getState().updateUserCredits(newCredits);
       }
 
   } catch (e: any) {
       console.error("[Gemini] Stream exception:", e);
+      console.error("[Gemini] Error details:", JSON.stringify(e, Object.getOwnPropertyNames(e)));
       if (e.message === "CREDITS_EXHAUSTED") {
           yield "⛔ **Crédits épuisés.**\n\nVeuillez recharger votre compte pour continuer.";
       } else {
@@ -206,28 +201,16 @@ export const generateSpeech = async (text: string, voiceName: string = 'Kore'): 
             }
 
             // Deduct credits directly via RPC (Reduced to 1 credit)
-            const { data: newCredits, error: rpcError } = await supabase.rpc('consume_credits', { p_amount: 1 });
-            console.log('[Billing Debug] newCredits:', newCredits);
-            if (rpcError) {
-                console.error('[Billing Error]', rpcError);
-                // Try fallback if the function signature is different
-                const { data: newCredits2, error: rpcError2 } = await supabase.rpc('consume_credits', { p_amount: 1, p_user_id: null });
-                console.log('[Billing Debug] newCredits2:', newCredits2);
-                if (rpcError2) {
-                    console.error('[Billing Error Fallback]', rpcError2);
+            const userId = useAppStore.getState().user?.id;
+            if (userId) {
+                const newCredits = await deductCredits(1, userId);
+                if (newCredits !== null) {
+                    useAppStore.getState().updateUserCredits(newCredits);
+                } else {
                     throw new Error("Crédits insuffisants");
                 }
-                if (typeof newCredits2 === 'number') {
-                    useAppStore.getState().updateUserCredits(newCredits2);
-                } else if (newCredits2 && typeof (newCredits2 as any).current_balance === 'number') {
-                    useAppStore.getState().updateUserCredits((newCredits2 as any).current_balance);
-                }
-            } else if (newCredits !== null) {
-                if (typeof newCredits === 'number') {
-                    useAppStore.getState().updateUserCredits(newCredits);
-                } else if (typeof (newCredits as any).current_balance === 'number') {
-                    useAppStore.getState().updateUserCredits((newCredits as any).current_balance);
-                }
+            } else {
+                throw new Error("Utilisateur non authentifié");
             }
 
             const binaryString = atob(base64Audio);
@@ -379,17 +362,11 @@ export const generateRoleplayResponse = async (
         });
 
         // Deduct credits (1 credit for text generation)
-        const { data: newCredits, error: rpcError } = await supabase.rpc('consume_credits', { p_amount: 1 });
-        if (rpcError) {
-            console.error('[Billing Error]', rpcError);
+        const newCredits = await deductCredits(1, user.id);
+        if (newCredits === null) {
             throw new Error("CREDITS_EXHAUSTED");
-        } else if (newCredits !== null) {
-            if (typeof newCredits === 'number') {
-                useAppStore.getState().updateUserCredits(newCredits);
-            } else if (typeof (newCredits as any).current_balance === 'number') {
-                useAppStore.getState().updateUserCredits((newCredits as any).current_balance);
-            }
         }
+        useAppStore.getState().updateUserCredits(newCredits);
 
         return JSON.parse(response.text || "{}");
     } catch (e: any) {
