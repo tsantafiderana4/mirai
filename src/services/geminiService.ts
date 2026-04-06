@@ -34,7 +34,11 @@ export const chargeVoiceMinute = async (): Promise<boolean> => {
             return false;
         }
         if (newCredits !== null) {
-            useAppStore.getState().updateUserCredits(newCredits);
+            if (typeof newCredits === 'number') {
+                useAppStore.getState().updateUserCredits(newCredits);
+            } else if (typeof (newCredits as any).current_balance === 'number') {
+                useAppStore.getState().updateUserCredits((newCredits as any).current_balance);
+            }
         }
         return true;
     } catch (e: any) {
@@ -139,7 +143,11 @@ export async function* sendMessageStream(
           console.error('[Billing Error]', rpcError);
           // We don't throw here because the stream already completed successfully
       } else if (newCredits !== null) {
-          useAppStore.getState().updateUserCredits(newCredits);
+          if (typeof newCredits === 'number') {
+              useAppStore.getState().updateUserCredits(newCredits);
+          } else if (typeof (newCredits as any).current_balance === 'number') {
+              useAppStore.getState().updateUserCredits((newCredits as any).current_balance);
+          }
       }
 
   } catch (e: any) {
@@ -199,17 +207,27 @@ export const generateSpeech = async (text: string, voiceName: string = 'Kore'): 
 
             // Deduct credits directly via RPC (Reduced to 1 credit)
             const { data: newCredits, error: rpcError } = await supabase.rpc('consume_credits', { p_amount: 1 });
+            console.log('[Billing Debug] newCredits:', newCredits);
             if (rpcError) {
                 console.error('[Billing Error]', rpcError);
                 // Try fallback if the function signature is different
                 const { data: newCredits2, error: rpcError2 } = await supabase.rpc('consume_credits', { p_amount: 1, p_user_id: null });
+                console.log('[Billing Debug] newCredits2:', newCredits2);
                 if (rpcError2) {
                     console.error('[Billing Error Fallback]', rpcError2);
                     throw new Error("Crédits insuffisants");
                 }
-                useAppStore.getState().updateUserCredits(newCredits2);
-            } else {
-                useAppStore.getState().updateUserCredits(newCredits);
+                if (typeof newCredits2 === 'number') {
+                    useAppStore.getState().updateUserCredits(newCredits2);
+                } else if (newCredits2 && typeof (newCredits2 as any).current_balance === 'number') {
+                    useAppStore.getState().updateUserCredits((newCredits2 as any).current_balance);
+                }
+            } else if (newCredits !== null) {
+                if (typeof newCredits === 'number') {
+                    useAppStore.getState().updateUserCredits(newCredits);
+                } else if (typeof (newCredits as any).current_balance === 'number') {
+                    useAppStore.getState().updateUserCredits((newCredits as any).current_balance);
+                }
             }
 
             const binaryString = atob(base64Audio);
@@ -366,7 +384,11 @@ export const generateRoleplayResponse = async (
             console.error('[Billing Error]', rpcError);
             throw new Error("CREDITS_EXHAUSTED");
         } else if (newCredits !== null) {
-            useAppStore.getState().updateUserCredits(newCredits);
+            if (typeof newCredits === 'number') {
+                useAppStore.getState().updateUserCredits(newCredits);
+            } else if (typeof (newCredits as any).current_balance === 'number') {
+                useAppStore.getState().updateUserCredits((newCredits as any).current_balance);
+            }
         }
 
         return JSON.parse(response.text || "{}");
