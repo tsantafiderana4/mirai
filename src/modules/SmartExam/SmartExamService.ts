@@ -5,6 +5,7 @@ import { SmartExam, ExamResultDetailed, ExamType } from "./types";
 import { TEXT_MODEL, generateText } from "../../services/geminiService"; // Use generateText or expose callGeminiFunction if needed, but better to use existing services or refactor
 import { CREDIT_COSTS } from "../../services/creditService";
 import { supabase } from "../../lib/supabase"; // Import supabase to call edge function directly if needed, or better, add a helper in geminiService
+import { useAppStore } from "../../store/useAppStore";
 
 // Helper to call edge function directly for specific schemas not covered by geminiService generic methods
 const callGeminiFunction = async (action: string, payload: any) => {
@@ -15,6 +16,10 @@ const callGeminiFunction = async (action: string, payload: any) => {
     if (error) {
         console.error(`[Gemini Function] Error calling ${action}:`, error);
         throw new Error(error.message || "Erreur de communication avec l'IA");
+    }
+
+    if (data.newBalance !== undefined && data.newBalance !== null) {
+        useAppStore.getState().updateUserCredits(data.newBalance);
     }
 
     return data;

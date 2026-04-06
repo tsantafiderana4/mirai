@@ -44,8 +44,10 @@ Deno.serve(async (req) => {
     )
 
     const cost = COSTS[action] || 0
+    let newBalance: number | null = null;
     if (cost > 0) {
-      const { data: newBalance, error: rpcError } = await supabaseClient.rpc('consume_credits', { p_amount: cost })
+      const { data, error: rpcError } = await supabaseClient.rpc('consume_credits', { p_amount: cost })
+      newBalance = data;
       
       if (rpcError) {
         console.error('[Billing Error]', rpcError)
@@ -57,7 +59,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'charge_voice_minute') {
-       return new Response(JSON.stringify({ success: true }), { 
+       return new Response(JSON.stringify({ success: true, newBalance }), { 
          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
        })
     }
@@ -187,7 +189,7 @@ Deno.serve(async (req) => {
 
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
-        return new Response(JSON.stringify({ json: JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}") }), {
+        return new Response(JSON.stringify({ json: JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}"), newBalance }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
     }
@@ -206,7 +208,7 @@ Deno.serve(async (req) => {
 
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
-        return new Response(JSON.stringify({ audioBase64: data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data }), {
+        return new Response(JSON.stringify({ audioBase64: data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data, newBalance }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
     }

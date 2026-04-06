@@ -9,12 +9,29 @@ const formatLoginEmail = (input: string) => {
     return `${cleanId}@teachermada.com`;
 };
 
+const createDefaultProfilePayload = (id: string, username: string, email: string) => ({
+    id,
+    username,
+    email,
+    role: 'user',
+    credits: 10,
+    preferences: {
+        targetLanguage: 'en',
+        level: 'beginner',
+        interests: [],
+        dailyGoal: 15,
+        theme: 'light'
+    },
+    is_suspended: false
+});
+
 export const useAuth = () => {
     const queryClient = useQueryClient();
 
     const loginMutation = useMutation({
         mutationFn: async ({ id, pass }: { id: string, pass: string }) => {
             let email = id.trim();
+            let usernameFallback = id.trim();
 
             if (!email.includes('@')) {
                 const { data } = await supabase
@@ -28,6 +45,8 @@ export const useAuth = () => {
                 } else {
                     email = formatLoginEmail(id);
                 }
+            } else {
+                usernameFallback = email.split('@')[0];
             }
             
             const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -38,13 +57,24 @@ export const useAuth = () => {
             if (authError) throw new Error("Identifiants incorrects.");
             if (!authData || !authData.user) throw new Error("Erreur de connexion.");
 
-            const { data: profileData, error: profileError } = await supabase
+            let { data: profileData, error: profileError } = await supabase
                 .from('profiles')
                 .select('*')
                 .eq('id', authData.user.id)
                 .single();
 
-            if (profileError) throw new Error("Erreur lors de la récupération du profil.");
+            if (profileError || !profileData) {
+                // Auto-create profile if it doesn't exist
+                const payload = createDefaultProfilePayload(authData.user.id, authData.user.user_metadata?.username || usernameFallback, authData.user.email || email);
+                const { data: newProfile, error: insertError } = await supabase
+                    .from('profiles')
+                    .insert([payload])
+                    .select()
+                    .single();
+                
+                if (insertError) throw new Error("Erreur lors de la création du profil.");
+                profileData = newProfile;
+            }
 
             if (profileData.is_suspended) {
                 await supabase.auth.signOut();
@@ -71,13 +101,14 @@ export const useAuth = () => {
     const registerMutation = useMutation({
         mutationFn: async ({ id, pass, email }: { id: string, pass: string, email?: string }) => {
             const finalEmail = email ? email.trim() : formatLoginEmail(id);
+            const username = id.trim();
             
             const { data: authData, error: authError } = await supabase.auth.signUp({
                 email: finalEmail,
                 password: pass,
                 options: {
                     data: {
-                        username: id.trim()
+                        username: username
                     }
                 }
             });
@@ -85,17 +116,27 @@ export const useAuth = () => {
             if (authError) throw new Error(authError.message);
             if (!authData || !authData.user) throw new Error("Erreur lors de l'inscription.");
 
-            // Profile is created via trigger, but we fetch it to be sure
-            // Wait a bit for the trigger to execute
+            // Wait a bit for the trigger to execute (if it exists)
             await new Promise(resolve => setTimeout(resolve, 500));
 
-            const { data: profileData, error: profileError } = await supabase
+            let { data: profileData, error: profileError } = await supabase
                 .from('profiles')
                 .select('*')
                 .eq('id', authData.user.id)
                 .single();
 
-            if (profileError) throw new Error("Erreur lors de la création du profil.");
+            if (profileError || !profileData) {
+                // Auto-create profile if it doesn't exist
+                const payload = createDefaultProfilePayload(authData.user.id, username, finalEmail);
+                const { data: newProfile, error: insertError } = await supabase
+                    .from('profiles')
+                    .insert([payload])
+                    .select()
+                    .single();
+                
+                if (insertError) throw new Error("Erreur lors de la création du profil.");
+                profileData = newProfile;
+            }
 
             return {
                 id: profileData.id,
