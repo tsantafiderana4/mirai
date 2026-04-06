@@ -9,6 +9,7 @@ export const usePayment = () => {
             userId: string, username: string, type: string, amount: number, transactionRef: string, additionalInfo: string
         }) => {
             const { error } = await supabase.from('admin_requests').insert({
+                id: crypto.randomUUID(),
                 user_id: userId,
                 username,
                 type,

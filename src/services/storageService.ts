@@ -945,7 +945,7 @@ export const storageService = {
       if (!isSupabaseConfigured()) return { status: 'pending' };
       try {
           const fullMessage = contact ? `${message} [Contact: ${contact}]` : message;
-          const newReq = { user_id: userId, username, type, amount, message: fullMessage, status: 'pending' };
+          const newReq = { id: crypto.randomUUID(), user_id: userId, username, type, amount, message: fullMessage, status: 'pending' };
           await supabase.from('admin_requests').insert([newReq]);
           return { status: 'pending' };
       } catch {

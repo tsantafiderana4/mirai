@@ -14,9 +14,10 @@ interface Props {
     onClose: () => void;
     onUpdateUser: (u: UserProfile) => void;
     onShowPayment: () => void;
+    notify: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment }) => {
+const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment, notify }) => {
     const { t, setLanguage } = useTranslation();
     const language = useTranslation().language;
 
@@ -53,11 +54,11 @@ const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment }
                 setCurrentExam(exam);
                 setView('runner');
             } else {
-                alert(t('exam.error_generate') || "Erreur: Impossible de générer l'examen. Veuillez réessayer.");
+                notify(t('exam.error_generate') || "Erreur: Impossible de générer l'examen. Veuillez réessayer.", 'error');
             }
         } catch (e) {
             console.error(e);
-            alert(t('exam.error_connection') || "Erreur de connexion au service d'examen.");
+            notify(t('exam.error_connection') || "Erreur de connexion au service d'examen.", 'error');
         } finally {
             setLoading(false);
         }
@@ -71,7 +72,7 @@ const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment }
             setResult(res);
             setView('result');
         } catch (e) {
-            alert(t('exam.error_correction') || "Erreur lors de la correction. Veuillez réessayer.");
+            notify(t('exam.error_correction') || "Erreur lors de la correction. Veuillez réessayer.", 'error');
         } finally {
             setLoading(false);
         }

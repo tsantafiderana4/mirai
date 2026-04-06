@@ -232,6 +232,7 @@ export const SmartExamService = {
                 // Notification
                 try {
                     await supabase.from('notifications').insert([{
+                        id: crypto.randomUUID(),
                         user_id: user.id,
                         type: 'achievement',
                         title: 'Certification Validée !',
@@ -245,6 +246,7 @@ export const SmartExamService = {
                  // Notification Echec
                  try {
                      await supabase.from('notifications').insert([{
+                         id: crypto.randomUUID(),
                          user_id: user.id,
                          type: 'system',
                          title: 'Résultat Examen',

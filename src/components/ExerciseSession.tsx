@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { ExerciseItem } from '../types';
+import { ExerciseItem, UserProfile } from '../types';
 import { Check, X, ArrowRight, Trophy, RefreshCcw, HelpCircle } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
+import { useLearningSession } from '../hooks/queries/useLearningSession';
 
 interface ExerciseSessionProps {
+  user: UserProfile;
   exercises: ExerciseItem[];
   onClose: () => void;
   onComplete: (score: number, total: number) => void;
 }
 
-const ExerciseSession: React.FC<ExerciseSessionProps> = ({ exercises, onClose, onComplete }) => {
+const ExerciseSession: React.FC<ExerciseSessionProps> = ({ user, exercises, onClose, onComplete }) => {
+  const { session, updateSession } = useLearningSession(user.id, user.preferences, 'exercise');
+  
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState('');
@@ -62,6 +66,26 @@ const ExerciseSession: React.FC<ExerciseSessionProps> = ({ exercises, onClose, o
         setStreak(0);
     }
     setIsChecked(true);
+
+    // Save interaction to session
+    if (session) {
+        const userMsg = {
+            id: Date.now().toString(),
+            role: 'user' as const,
+            text: `**Question:** ${currentExercise.question}\n**Ma réponse:** ${answer}`,
+            timestamp: Date.now()
+        };
+        const modelMsg = {
+            id: (Date.now() + 1).toString(),
+            role: 'model' as const,
+            text: correct ? '✅ Correct !' : `❌ Incorrect. La bonne réponse était : **${currentExercise.correctAnswer}**`,
+            timestamp: Date.now() + 1
+        };
+        updateSession({
+            ...session,
+            messages: [...session.messages, userMsg, modelMsg]
+        }).catch(console.error);
+    }
   };
 
   const handleNext = () => {
@@ -73,6 +97,18 @@ const ExerciseSession: React.FC<ExerciseSessionProps> = ({ exercises, onClose, o
       setIsCorrect(false);
     } else {
       setShowSummary(true);
+      if (session) {
+          const summaryMsg = {
+              id: Date.now().toString(),
+              role: 'model' as const,
+              text: `🏆 **Session d'exercices terminée !**\nScore final : **${score}/${exercises.length}**\nPrécision : **${Math.round((score / exercises.length) * 100)}%**`,
+              timestamp: Date.now()
+          };
+          updateSession({
+              ...session,
+              messages: [...session.messages, summaryMsg]
+          }).catch(console.error);
+      }
     }
   };
 

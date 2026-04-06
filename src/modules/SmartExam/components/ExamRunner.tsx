@@ -205,14 +205,13 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
     };
 
     const handleRetrySpeaking = () => {
-        if (window.confirm(t('exam_runner.confirm_reset'))) {
-            if (isListening && recognitionRef.current) {
-                recognitionRef.current.stop();
-                setIsListening(false);
-            }
-            setHistory(prev => [...prev, answers[currentSection.id] || '']);
-            setAnswers(prev => ({ ...prev, [currentSection.id]: '' }));
+        if (isListening && recognitionRef.current) {
+            recognitionRef.current.stop();
+            setIsListening(false);
         }
+        setHistory(prev => [...prev, answers[currentSection.id] || '']);
+        setAnswers(prev => ({ ...prev, [currentSection.id]: '' }));
+        toast.info(t('exam_runner.confirm_reset') || "Réponse réinitialisée.");
     };
 
     const handleManualChange = (val: string) => {

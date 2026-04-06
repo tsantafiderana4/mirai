@@ -2,19 +2,35 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
 import { LearningSession, UserPreferences } from '../../types';
 
-export const useLearningSession = (userId: string | undefined, preferences: UserPreferences | null | undefined) => {
+export const useLearningSession = (
+    userId: string | undefined, 
+    preferences: UserPreferences | null | undefined,
+    sessionType: 'lesson' | 'exercise' | 'dialogue' | 'exam' | 'call' = 'lesson',
+    specificLevel?: string
+) => {
     const queryClient = useQueryClient();
+    
+    const targetLanguage = preferences?.targetLanguage;
+    const level = specificLevel || preferences?.level || 'A1';
+
+    const queryKey = ['learningSession', userId, targetLanguage, level, sessionType];
 
     const query = useQuery({
-        queryKey: ['learningSession', userId, preferences?.targetLanguage],
+        queryKey,
         queryFn: async () => {
-            if (!userId || !preferences?.targetLanguage) return null;
+            console.log("useLearningSession queryFn called with:", { userId, targetLanguage, level, sessionType });
+            if (!userId || !targetLanguage) {
+                console.warn("useLearningSession queryFn returning null because missing userId or targetLanguage");
+                return null;
+            }
             
             const { data, error } = await supabase
                 .from('learning_sessions')
                 .select('*')
                 .eq('user_id', userId)
-                .eq('language', preferences.targetLanguage)
+                .eq('language', targetLanguage)
+                .eq('level', level)
+                .eq('type', sessionType)
                 .order('updated_at', { ascending: false })
                 .limit(1)
                 .single();
@@ -30,15 +46,18 @@ export const useLearningSession = (userId: string | undefined, preferences: User
                     messages: data.messages || [],
                     language: data.language,
                     level: data.level,
+                    type: data.type || sessionType,
                     updatedAt: new Date(data.updated_at).getTime()
                 } as LearningSession;
             }
 
-            // Create new session if none exists
+            // Create new session if none exists for this specific context
             const newSession = {
+                id: crypto.randomUUID(),
                 user_id: userId,
-                language: preferences.targetLanguage,
-                level: preferences.level || 'A1',
+                language: targetLanguage,
+                level: level,
+                type: sessionType,
                 messages: [],
                 updated_at: new Date().toISOString()
             };
@@ -57,61 +76,65 @@ export const useLearningSession = (userId: string | undefined, preferences: User
                 messages: insertedData.messages || [],
                 language: insertedData.language,
                 level: insertedData.level,
+                type: insertedData.type,
                 updatedAt: new Date(insertedData.updated_at).getTime()
             } as LearningSession;
         },
-        enabled: !!userId && !!preferences?.targetLanguage,
+        enabled: !!userId && !!targetLanguage,
         staleTime: 1000 * 60 * 5, // 5 minutes
     });
 
     const updateMutation = useMutation({
         mutationFn: async (session: LearningSession) => {
             const payload = {
+                id: session.id,
                 user_id: session.userId,
                 language: session.language,
                 level: session.level,
+                type: session.type,
                 messages: session.messages,
                 updated_at: new Date().toISOString()
             };
             const { error } = await supabase
                 .from('learning_sessions')
-                .upsert(payload)
-                .eq('id', session.id);
+                .upsert(payload);
 
             if (error) throw error;
             return session;
         },
         onMutate: async (newSession) => {
-            await queryClient.cancelQueries({ queryKey: ['learningSession', userId, preferences?.targetLanguage] });
-            const previousSession = queryClient.getQueryData(['learningSession', userId, preferences?.targetLanguage]);
+            await queryClient.cancelQueries({ queryKey });
+            const previousSession = queryClient.getQueryData(queryKey);
             
-            queryClient.setQueryData(['learningSession', userId, preferences?.targetLanguage], newSession);
+            queryClient.setQueryData(queryKey, newSession);
 
             return { previousSession };
         },
         onError: (err, newSession, context) => {
             if (context?.previousSession) {
-                queryClient.setQueryData(['learningSession', userId, preferences?.targetLanguage], context.previousSession);
+                queryClient.setQueryData(queryKey, context.previousSession);
             }
         },
         onSettled: () => {
-            queryClient.invalidateQueries({ queryKey: ['learningSession', userId, preferences?.targetLanguage] });
+            queryClient.invalidateQueries({ queryKey });
         }
     });
 
     const clearMutation = useMutation({
         mutationFn: async () => {
-            if (!userId || !preferences?.targetLanguage) return;
+            if (!userId || !targetLanguage) return;
             const { error } = await supabase
                 .from('learning_sessions')
                 .delete()
                 .eq('user_id', userId)
-                .eq('language', preferences.targetLanguage);
+                .eq('language', targetLanguage)
+                .eq('level', level)
+                .eq('type', sessionType);
             
             if (error) throw error;
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['learningSession', userId, preferences?.targetLanguage] });
+            queryClient.invalidateQueries({ queryKey });
         }
     });
 

@@ -7,11 +7,14 @@ import { useExamResults } from '../hooks/queries/useExamResults';
 import { useNotifications } from '../hooks/queries/useNotifications';
 import { useUserProfile } from '../hooks/queries/useUserProfile';
 import { useLearningSession } from '../hooks/queries/useLearningSession';
+import { useSessionHistory } from '../hooks/queries/useSessionHistory';
 import { toast } from './Toaster';
 import ExamResultView from '../modules/SmartExam/components/ExamResult';
 import { ExamResultDetailed } from '../modules/SmartExam/types';
 import { useTranslation } from '../contexts/LanguageContext';
 import { useAppStore } from '../store/useAppStore';
+import MarkdownRenderer from './MarkdownRenderer';
+import { LearningSession } from '../types';
 
 interface Props {
   onClose: () => void;
@@ -30,13 +33,15 @@ const SmartDashboard: React.FC<Props> = ({
   const { t, setLanguage } = useTranslation();
   const language = useTranslation().language;
 
-  const [activeTab, setActiveTab] = useState<'menu' | 'edit' | 'certs' | 'notifs'>('menu');
+  const [activeTab, setActiveTab] = useState<'menu' | 'edit' | 'certs' | 'notifs' | 'history'>('menu');
+  const [selectedSessionHistory, setSelectedSessionHistory] = useState<LearningSession | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const { certificates } = useCertificates(user?.id);
   const { examResults } = useExamResults(user?.id);
   const { notifications, markRead, markAllRead, deleteNotification } = useNotifications(user?.id);
   const { updateProfile } = useUserProfile(user?.id);
   const { clearSession } = useLearningSession(user?.id || '', user?.preferences);
+  const { data: sessionHistory = [], isLoading: isLoadingHistory } = useSessionHistory(user?.id);
 
   const unreadCount = notifications.filter(n => !n.read).length;
   const [selectedResult, setSelectedResult] = useState<ExamResultDetailed | null>(null);
@@ -280,22 +285,28 @@ const SmartDashboard: React.FC<Props> = ({
 
         {/* Custom Tab Switcher (Pill Style) */}
         <div className="px-6 mt-2 mb-4">
-            <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+            <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl overflow-x-auto no-scrollbar">
                 <button 
-                    onClick={() => setActiveTab('menu')} 
-                    className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'menu' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                    onClick={() => { setActiveTab('menu'); setSelectedSessionHistory(null); }} 
+                    className={`flex-1 py-2 px-3 min-w-max text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'menu' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
                 >
                     <User className="w-3.5 h-3.5" /> {t('dashboard.my_profile')}
                 </button>
                 <button 
-                    onClick={() => setActiveTab('certs')} 
-                    className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'certs' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                    onClick={() => { setActiveTab('certs'); setSelectedSessionHistory(null); }} 
+                    className={`flex-1 py-2 px-3 min-w-max text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'certs' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
                 >
                     <Trophy className="w-3.5 h-3.5" /> {t('dashboard.certificates')}
                 </button>
                 <button 
-                    onClick={() => setActiveTab('notifs')} 
-                    className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 relative ${activeTab === 'notifs' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                    onClick={() => { setActiveTab('history'); setSelectedSessionHistory(null); }} 
+                    className={`flex-1 py-2 px-3 min-w-max text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === 'history' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                >
+                    <Book className="w-3.5 h-3.5" /> Historique
+                </button>
+                <button 
+                    onClick={() => { setActiveTab('notifs'); setSelectedSessionHistory(null); }} 
+                    className={`flex-1 py-2 px-3 min-w-max text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 relative ${activeTab === 'notifs' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
                 >
                     <Bell className="w-3.5 h-3.5" />
                     {unreadCount > 0 && (
@@ -753,6 +764,116 @@ const SmartDashboard: React.FC<Props> = ({
                             ))}
                         </div>
                     </div>
+                </div>
+            )}
+
+            {/* HISTORY TAB */}
+            {activeTab === 'history' && (
+                <div className="space-y-6 animate-fade-in">
+                    {!selectedSessionHistory ? (
+                        <>
+                            <button onClick={() => setActiveTab('menu')} className="text-xs font-bold text-slate-400 hover:text-indigo-500 flex items-center gap-1 mb-6">
+                                <ChevronRight className="w-3 h-3 rotate-180"/> {t('dashboard.back_dashboard')}
+                            </button>
+                            
+                            <h3 className="text-lg font-black text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                                <Book className="w-5 h-5 text-indigo-500" /> Historique d'Apprentissage
+                            </h3>
+
+                            {isLoadingHistory ? (
+                                <div className="flex justify-center py-8">
+                                    <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
+                                </div>
+                            ) : sessionHistory.length === 0 ? (
+                                <div className="text-center py-10 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+                                    <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-3">
+                                        <Book className="w-6 h-6 text-slate-400" />
+                                    </div>
+                                    <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Aucun historique disponible.</p>
+                                    <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">Commencez une session pour voir l'historique.</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    {sessionHistory.map((session) => (
+                                        <div 
+                                            key={session.id} 
+                                            onClick={() => setSelectedSessionHistory(session)}
+                                            className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm cursor-pointer hover:scale-[1.02] hover:shadow-md transition-all group"
+                                        >
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-bold uppercase tracking-wider text-indigo-500 bg-indigo-50 dark:bg-indigo-500/10 px-2 py-1 rounded-md">
+                                                        {session.type === 'call' ? 'Appel Vocal' : session.type === 'exercise' ? 'Exercice' : session.type === 'lesson' ? 'Leçon' : session.type === 'dialogue' ? 'Dialogue' : 'Examen'}
+                                                    </span>
+                                                    <span className="text-xs text-slate-400 font-medium">
+                                                        {new Date(session.updatedAt).toLocaleDateString()}
+                                                    </span>
+                                                </div>
+                                                <div className="text-xs font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                                                    {session.language} • {session.level}
+                                                    <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-indigo-500 transition-colors" />
+                                                </div>
+                                            </div>
+                                            <div className="text-sm text-slate-600 dark:text-slate-300">
+                                                {session.messages.length} messages échangés
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <div className="animate-slide-in-right flex flex-col h-full">
+                            <button onClick={() => setSelectedSessionHistory(null)} className="text-xs font-bold text-slate-400 hover:text-indigo-500 flex items-center gap-1 mb-4">
+                                <ChevronRight className="w-3 h-3 rotate-180"/> Retour à l'historique
+                            </button>
+                            
+                            <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 mb-4 shrink-0">
+                                <div className="flex justify-between items-center mb-2">
+                                    <span className="text-xs font-bold uppercase tracking-wider text-indigo-500 bg-indigo-50 dark:bg-indigo-500/10 px-2 py-1 rounded-md">
+                                        {selectedSessionHistory.type === 'call' ? 'Appel Vocal' : selectedSessionHistory.type === 'exercise' ? 'Exercice' : selectedSessionHistory.type === 'lesson' ? 'Leçon' : selectedSessionHistory.type === 'dialogue' ? 'Dialogue' : 'Examen'}
+                                    </span>
+                                    <span className="text-xs text-slate-400 font-medium">
+                                        {new Date(selectedSessionHistory.updatedAt).toLocaleString()}
+                                    </span>
+                                </div>
+                                <h4 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                                    <Globe className="w-4 h-4 text-slate-400" />
+                                    {selectedSessionHistory.language} • {selectedSessionHistory.level}
+                                </h4>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto space-y-4 pr-2 no-scrollbar pb-10">
+                                {selectedSessionHistory.messages.map(msg => {
+                                    const isUser = msg.role === 'user';
+                                    const isSystem = msg.role === 'model' && (msg.text.startsWith('✅') || msg.text.startsWith('❌') || msg.text.startsWith('🏆'));
+                                    
+                                    return (
+                                        <div key={msg.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                                            <div className={`flex gap-2 max-w-[85%] ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+                                                {!isUser && !isSystem && (
+                                                    <div className="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900/50 flex items-center justify-center shrink-0 mt-1">
+                                                        <Brain className="w-3.5 h-3.5 text-indigo-500" />
+                                                    </div>
+                                                )}
+                                                <div className={`p-3.5 rounded-2xl text-sm shadow-sm ${
+                                                    isUser 
+                                                        ? 'bg-indigo-500 text-white rounded-tr-sm' 
+                                                        : isSystem
+                                                            ? msg.text.startsWith('✅') || msg.text.startsWith('🏆')
+                                                                ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 rounded-tl-sm'
+                                                                : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 rounded-tl-sm'
+                                                            : 'bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-tl-sm'
+                                                }`}>
+                                                    <MarkdownRenderer content={msg.text} />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 

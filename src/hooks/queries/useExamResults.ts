@@ -35,6 +35,7 @@ export const useExamResults = (userId: string | undefined) => {
     const insertMutation = useMutation({
         mutationFn: async (examResult: Omit<ExamResult, 'id'>) => {
             const payload = {
+                id: crypto.randomUUID(),
                 user_id: examResult.userId,
                 score: examResult.score,
                 total_questions: examResult.totalQuestions,

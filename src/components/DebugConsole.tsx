@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Terminal, Trash2, Copy } from 'lucide-react';
+import { toast } from './Toaster';
 
 type LogType = 'log' | 'warn' | 'error' | 'info';
 
@@ -97,7 +98,7 @@ const DebugConsole: React.FC = () => {
   const copyLogs = () => {
     const text = logs.map(l => `[${l.timestamp}] [${l.type.toUpperCase()}] ${l.message}`).join('\n');
     navigator.clipboard.writeText(text);
-    alert('Logs copiés !');
+    toast.success('Logs copiés !');
   };
 
   if (!isVisible) {
@@ -168,11 +169,11 @@ const DebugConsole: React.FC = () => {
                   console.log("Status:", res.status);
                   const text = await res.text();
                   console.log("Response:", text);
-                  if (res.ok) alert(`Connexion OK ! Réponse: ${text.substring(0, 50)}...`);
-                  else alert(`Erreur: ${res.status} ${text}`);
+                  if (res.ok) toast.success(`Connexion OK ! Réponse: ${text.substring(0, 50)}...`);
+                  else toast.error(`Erreur: ${res.status} ${text}`);
               } catch (e: any) {
                   console.error("Fetch Error:", e);
-                  alert(`Erreur Réseau: ${e.message}`);
+                  toast.error(`Erreur Réseau: ${e.message}`);
               }
           }} className="p-1.5 hover:bg-blue-900/50 rounded text-blue-400 font-bold text-[10px] px-2" title="Test Connection">
             TEST CONN
@@ -181,7 +182,7 @@ const DebugConsole: React.FC = () => {
               const { data: { session } } = await supabase.auth.getSession();
               if (!session) {
                   console.error("No active session");
-                  alert("No active session. Please log in.");
+                  toast.error("No active session. Please log in.");
                   return;
               }
 
@@ -192,14 +193,14 @@ const DebugConsole: React.FC = () => {
                   
                   if (error) {
                       console.error("RPC Error:", error);
-                      alert(`RPC Error: ${error.message}`);
+                      toast.error(`RPC Error: ${error.message}`);
                   } else {
                       console.log("Current Credits (RPC):", data);
-                      alert(`Credits OK! Current Balance: ${data}`);
+                      toast.success(`Credits OK! Current Balance: ${data}`);
                   }
               } catch (e: any) {
                   console.error("Test Exception:", e);
-                  alert(`Exception: ${e.message}`);
+                  toast.error(`Exception: ${e.message}`);
               }
           }} className="p-1.5 hover:bg-yellow-900/50 rounded text-yellow-400 font-bold text-[10px] px-2" title="Test Credits">
             TEST CREDITS
@@ -210,10 +211,10 @@ const DebugConsole: React.FC = () => {
                   const { generateText } = await import('../services/geminiService');
                   const result = await generateText("Hello Gemini, are you there?");
                   console.log("Gemini Response:", result);
-                  alert(`Gemini OK: ${result}`);
+                  toast.success(`Gemini OK: ${result}`);
               } catch (e: any) {
                   console.error("Gemini Test Error:", e);
-                  alert(`Gemini Error: ${e.message}`);
+                  toast.error(`Gemini Error: ${e.message}`);
               }
           }} className="p-1.5 hover:bg-purple-900/50 rounded text-purple-400 font-bold text-[10px] px-2" title="Test Gemini">
             TEST GEMINI
@@ -228,13 +229,13 @@ const DebugConsole: React.FC = () => {
                   if (error) throw error;
                   console.log("Health Check:", data);
                   if (data.status === 'ok') {
-                      alert(`Edge Function OK (Key len: ${data.keyLength})`);
+                      toast.success(`Edge Function OK (Key len: ${data.keyLength})`);
                   } else {
-                      alert(`Edge Function Health Failed: ${JSON.stringify(data)}`);
+                      toast.error(`Edge Function Health Failed: ${JSON.stringify(data)}`);
                   }
               } catch (e: any) {
                   console.error("Health Check Error:", e);
-                  alert(`Health Check Error: ${e.message}`);
+                  toast.error(`Health Check Error: ${e.message}`);
               }
           }} className="p-1.5 hover:bg-emerald-900/50 rounded text-emerald-400 font-bold text-[10px] px-2" title="Test Health">
             TEST HEALTH

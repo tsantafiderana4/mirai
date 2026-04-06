@@ -25,7 +25,7 @@ export const useChat = (user: UserProfile | null, session: LearningSession | nul
         setIsStreaming(true);
 
         try {
-            const stream = sendMessageStream(text, user, messages);
+            const stream = sendMessageStream(text, user, messages, session?.type || 'lesson');
             let fullText = "";
             const aiMsgId = (Date.now() + 1).toString();
             setMessages(prev => [...prev, { id: aiMsgId, role: 'model', text: "", timestamp: Date.now() }]);

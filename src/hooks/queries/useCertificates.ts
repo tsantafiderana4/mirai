@@ -33,6 +33,7 @@ export const useCertificates = (userId: string | undefined) => {
     const insertMutation = useMutation({
         mutationFn: async (certificate: Omit<Certificate, 'id'>) => {
             const payload = {
+                id: crypto.randomUUID(),
                 user_id: certificate.userId,
                 exam_id: certificate.examId,
                 language: certificate.language,

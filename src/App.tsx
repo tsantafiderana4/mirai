@@ -55,7 +55,7 @@ const AppContent: React.FC = () => {
   const [authUserId, setAuthUserId] = useState<string | undefined>(undefined);
   
   const { profile, updateProfile } = useUserProfile(authUserId);
-  const { session: fetchedSession } = useLearningSession(authUserId, profile?.preferences ?? undefined);
+  const { session: fetchedSession, refetch: refetchSession } = useLearningSession(user?.id, user?.preferences ?? undefined);
 
   const [showAuth, setShowAuth] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
@@ -273,8 +273,49 @@ const AppContent: React.FC = () => {
     try {
         console.log("Resuming course for user:", user.id);
         
-        if (fetchedSession && fetchedSession.id) {
-            setCurrentSession(fetchedSession);
+        let sessionToResume = fetchedSession;
+        
+        if (!sessionToResume || !sessionToResume.id) {
+            const { data, error } = await refetchSession();
+            if (error) {
+                console.error("Refetch session error:", error);
+                throw error;
+            }
+            sessionToResume = data;
+        }
+
+        if (!sessionToResume || !sessionToResume.id) {
+            console.warn("Refetch returned empty session, attempting manual creation");
+            const newSession = {
+                id: crypto.randomUUID(),
+                user_id: user.id,
+                language: user.preferences.targetLanguage,
+                level: user.preferences.level || 'A1',
+                type: 'lesson',
+                messages: [],
+                updated_at: new Date().toISOString()
+            };
+            const { data: insertedData, error: insertError } = await supabase
+                .from('learning_sessions')
+                .insert([newSession])
+                .select()
+                .single();
+                
+            if (insertError) throw insertError;
+            
+            sessionToResume = {
+                id: insertedData.id,
+                userId: insertedData.user_id,
+                messages: insertedData.messages || [],
+                language: insertedData.language,
+                level: insertedData.level,
+                type: insertedData.type,
+                updatedAt: new Date(insertedData.updated_at).getTime()
+            } as LearningSession;
+        }
+        
+        if (sessionToResume && sessionToResume.id) {
+            setCurrentSession(sessionToResume);
             toast.success("Cours repris avec succès !");
         } else {
             throw new Error("Session invalide");
@@ -387,6 +428,7 @@ const AppContent: React.FC = () => {
 
           {activeMode === 'exercise' && (
               <ExerciseSession 
+                  user={user}
                   exercises={currentExercises}
                   onClose={() => setActiveMode('chat')}
                   onComplete={finishExercise}
@@ -405,6 +447,7 @@ const AppContent: React.FC = () => {
                       onClose={() => setActiveMode('chat')}
                       onUpdateUser={setUser}
                       onShowPayment={() => setShowPayment(true)}
+                      notify={notify}
                   />
               </React.Suspense>
           )}

@@ -5,6 +5,7 @@ import { UserProfile } from '../types';
 import { Modality, GoogleGenAI } from '@google/genai';
 import { chargeVoiceMinute } from '../services/geminiService';
 import { useUserProfile } from '../hooks/queries/useUserProfile';
+import { useLearningSession } from '../hooks/queries/useLearningSession';
 
 interface LiveTeacherProps {
   user: UserProfile;
@@ -110,6 +111,12 @@ const getDisconnectMessage = (code: number | undefined, reason: string | undefin
 
 const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, notify, onShowPayment }) => {
   const { refetch } = useUserProfile(user.id);
+  const { session, updateSession } = useLearningSession(user.id, user.preferences, 'call');
+  
+  const sessionRef = useRef(session);
+  useEffect(() => {
+      sessionRef.current = session;
+  }, [session]);
   
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [subStatus, setSubStatus] = useState('');
@@ -304,7 +311,11 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
                   systemInstruction: { parts: [{ text: sysPrompt }] },
                   speechConfig: {
                       voiceConfig: { prebuiltVoiceConfig: { voiceName: user.preferences?.voiceName || 'Kore' } }
-                  }
+                  },
+                  // @ts-ignore - Types might be outdated in SDK
+                  outputAudioTranscription: {},
+                  // @ts-ignore
+                  inputAudioTranscription: {}
               },
               callbacks: {
                   onopen: () => {
@@ -321,14 +332,33 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
                                       data: "" // Empty audio to trigger start if needed, or rely on system prompt
                                   }
                               });
-                              // Note: sending text directly via sendRealtimeInput might not be supported as 'text' property.
-                              // The system prompt should handle the greeting.
                           }).catch(() => {});
                       }
                   },
                   onmessage: async (msg) => {
                       if (!isMountedRef.current) return;
                       try {
+                          console.log("Live API Message:", msg);
+                          // Handle Transcriptions
+                          if (msg.serverContent?.modelTurn?.parts) {
+                              const textPart = msg.serverContent.modelTurn.parts.find((p: any) => p.text);
+                              if (textPart && textPart.text && sessionRef.current) {
+                                  const newMsg = { id: Date.now().toString(), role: 'model' as const, text: textPart.text, timestamp: Date.now() };
+                                  updateSession({ ...sessionRef.current, messages: [...sessionRef.current.messages, newMsg] }).catch(console.error);
+                              }
+                          }
+                          
+                          // Handle User Input Transcription (if available in the message structure)
+                          const userTextPart = (msg as any).clientContent?.turnComplete?.parts?.find((p: any) => p.text) || 
+                                               (msg.serverContent as any)?.clientContent?.parts?.find((p: any) => p.text) ||
+                                               (msg as any).inputTranscription?.parts?.find((p: any) => p.text);
+                                               
+                          if (userTextPart && userTextPart.text && sessionRef.current) {
+                              const newMsg = { id: Date.now().toString(), role: 'user' as const, text: userTextPart.text, timestamp: Date.now() };
+                              updateSession({ ...sessionRef.current, messages: [...sessionRef.current.messages, newMsg] }).catch(console.error);
+                          }
+                          
+                          // Handle Audio
                           const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
                           if (audioData) {
                               setTeacherSpeaking(true);
@@ -619,6 +649,23 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
                       </>
                   )}
               </div>
+              
+              {/* Transcription Overlay */}
+              {session?.messages && session.messages.length > 0 && (
+                  <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md px-6 pb-4">
+                      <div className="flex flex-col gap-2 max-h-32 overflow-y-auto no-scrollbar" style={{ maskImage: 'linear-gradient(to bottom, transparent, black 20%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 20%)' }}>
+                          {session.messages.slice(-3).map((msg, idx) => (
+                              <div key={idx} className={`text-sm p-3 rounded-2xl backdrop-blur-md border ${
+                                  msg.role === 'user' 
+                                  ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-100 self-end ml-8 rounded-br-sm' 
+                                  : 'bg-emerald-500/20 border-emerald-500/30 text-emerald-100 self-start mr-8 rounded-bl-sm'
+                              }`}>
+                                  {msg.text}
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+              )}
           </div>
 
           {/* Erreur overlay */}

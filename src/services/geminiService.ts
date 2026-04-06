@@ -111,7 +111,8 @@ export const generateSupportResponse = async (
 export async function* sendMessageStream(
   message: string,
   user: UserProfile,
-  history: ChatMessage[]
+  history: ChatMessage[],
+  sessionType: 'lesson' | 'exercise' | 'dialogue' | 'exam' | 'call' = 'lesson'
 ) {
   if (!user.preferences) throw new Error("Profil incomplet");
 
@@ -146,7 +147,7 @@ export async function* sendMessageStream(
               model: TEXT_MODEL,
               contents: finalMessage,
               config: {
-                  systemInstruction: SYSTEM_PROMPT_TEMPLATE(user, user.preferences!),
+                  systemInstruction: SYSTEM_PROMPT_TEMPLATE(user, user.preferences!, sessionType),
                   temperature: 0.7,
                   maxOutputTokens: 8192,
               }

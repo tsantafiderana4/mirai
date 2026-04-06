@@ -4,6 +4,7 @@ import { UserProfile, ChatMessage } from '../types';
 import { generateRoleplayResponse } from '../services/geminiService';
 import { CREDIT_COSTS } from '../services/creditService';
 import { useUserProfile } from '../hooks/queries/useUserProfile';
+import { useLearningSession } from '../hooks/queries/useLearningSession';
 import { X, Send, Mic, MessageCircle, Clock, GraduationCap, ShoppingBag, Plane, Stethoscope, Utensils, School, XCircle, Trophy, AlertTriangle, Loader2, Play, Briefcase, Info, ArrowLeft, RefreshCcw, BookOpen, Sparkles, Languages, BarChart, ArrowRight, Settings2, Globe, ChevronRight } from 'lucide-react';
 
 interface DialogueSessionProps {
@@ -57,6 +58,13 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
   const [selectedLang, setSelectedLang] = useState(user.preferences?.targetLanguage?.split(' ')[0] || 'Anglais');
   const [selectedLevel, setSelectedLevel] = useState(user.preferences?.level || 'Débutant (A1)');
 
+  const { session: learningSession, updateSession, clearSession } = useLearningSession(
+      user.id, 
+      { ...user.preferences!, targetLanguage: selectedLang, level: selectedLevel }, 
+      'dialogue',
+      selectedLevel
+  );
+
   const [scenario, setScenario] = useState<typeof SCENARIOS[0] | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -68,6 +76,16 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
   const [finalScore, setFinalScore] = useState<{score: number, feedback: string} | null>(null);
   const [isInitializing, setIsInitializing] = useState(false);
   const [isListening, setIsListening] = useState(false);
+
+  const [hasExistingSession, setHasExistingSession] = useState(false);
+
+  useEffect(() => {
+      if (learningSession && learningSession.messages.length > 0) {
+          setHasExistingSession(true);
+      } else {
+          setHasExistingSession(false);
+      }
+  }, [learningSession]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -90,6 +108,14 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
 
   const confirmSetup = () => {
       setStep('selection');
+  };
+
+  const resumeSession = () => {
+      if (learningSession && learningSession.messages.length > 0) {
+          setMessages(learningSession.messages);
+          setScenario(SCENARIOS[0]); // Default to freestyle if resuming
+          setStep('chat');
+      }
   };
 
   const selectScenario = (selected: typeof SCENARIOS[0]) => {
@@ -119,15 +145,23 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
           setIsInitializing(true);
           
           try {
+              await clearSession(); // Clear previous dialogue for this level/lang
+              
               // Use session-specific user config
               const sessionUser = getSessionUser();
               const result = await generateRoleplayResponse([], scenario.prompt, sessionUser, false, true);
-              setMessages([{
+              
+              const initMsg: ChatMessage = {
                   id: 'sys_init',
                   role: 'model',
                   text: result.aiReply,
                   timestamp: Date.now()
-              }]);
+              };
+              setMessages([initMsg]);
+              
+              if (learningSession) {
+                  await updateSession({ ...learningSession, messages: [initMsg] });
+              }
               
               const { data: u } = await refetch();
               if (u) onUpdateUser(u);
@@ -184,7 +218,8 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
       const userText = input;
       const userMsg: ChatMessage = { id: Date.now().toString(), role: 'user', text: userText, timestamp: Date.now() };
       
-      setMessages(prev => [...prev, userMsg]);
+      const newHistory = [...messages, userMsg];
+      setMessages(newHistory);
       setInput('');
       setIsLoading(true);
       setLastCorrection(null);
@@ -197,9 +232,8 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
       }
 
       try {
-          const currentHistory = [...messages, userMsg];
           const sessionUser = getSessionUser();
-          const result = await generateRoleplayResponse(currentHistory, scenario.prompt, sessionUser);
+          const result = await generateRoleplayResponse(newHistory, scenario.prompt, sessionUser);
           
           if (result.aiReply === "⚠️ Crédits insuffisants.") {
               notify("Crédits épuisés.", 'error');
@@ -219,7 +253,12 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
           }
 
           const aiMsg: ChatMessage = { id: (Date.now() + 1).toString(), role: 'model', text: result.aiReply, timestamp: Date.now() };
-          setMessages(prev => [...prev, aiMsg]);
+          const finalMessages = [...newHistory, aiMsg];
+          setMessages(finalMessages);
+          
+          if (learningSession) {
+              await updateSession({ ...learningSession, messages: finalMessages });
+          }
       } catch (e) {
           console.error(e);
           notify("Erreur de connexion", 'error');
@@ -286,8 +325,13 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
                             {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
                         </select>
                     </div>
+                    {hasExistingSession && (
+                        <button onClick={resumeSession} className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-2xl shadow-lg shadow-emerald-500/30 transform active:scale-95 transition-all flex items-center justify-center gap-2 mt-4">
+                            <RefreshCcw className="w-5 h-5" /> Reprendre la session
+                        </button>
+                    )}
                     <button onClick={confirmSetup} className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl shadow-lg shadow-indigo-500/30 transform active:scale-95 transition-all flex items-center justify-center gap-2 mt-4">
-                        Continuer <ArrowRight className="w-5 h-5" />
+                        {hasExistingSession ? "Nouveau Dialogue" : "Continuer"} <ArrowRight className="w-5 h-5" />
                     </button>
                 </div>
             </div>
