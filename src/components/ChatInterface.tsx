@@ -209,6 +209,13 @@ const ChatInterface: React.FC<Props> = ({
 
   const handleStartCourse = () => {
       if (!user) return;
+      const allowed = user.credits >= CREDIT_COSTS.LESSON;
+      if (!allowed) {
+          notify(t('chat.insufficient_credits'), "error");
+          onShowPayment();
+          return;
+      }
+      setShowStartButton(false); // Hide button
       const isMalagasy = user.preferences?.explanationLanguage === ExplanationLanguage.Malagasy;
       processMessage(isMalagasy ? "HANOMBOKA LESONA" : "COMMENCER");
   };

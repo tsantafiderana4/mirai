@@ -2,10 +2,11 @@ import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Volume2 } from 'lucide-react';
+import { CREDIT_COSTS } from '../services/creditService';
 
 interface MarkdownRendererProps {
   content: string;
-  onPlayAudio?: (text: string) => void;
+  onPlayAudio?: (text: string, id: string, cost: number) => void;
   highlight?: string;
 }
 
@@ -113,7 +114,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, onPlayAudi
                     className="inline-flex items-center gap-1 align-baseline group/word cursor-pointer bg-indigo-50 dark:bg-indigo-500/10 px-1.5 py-0.5 rounded-md hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-all border border-indigo-200/50 dark:border-indigo-500/20 active:scale-95"
                     onClick={(e) => {
                         e.stopPropagation();
-                        onPlayAudio(textContent);
+                        if (onPlayAudio) onPlayAudio(textContent, textContent, CREDIT_COSTS.AUDIO_PRONUNCIATION);
                     }}
                     title="Écouter la prononciation"
                     role="button"

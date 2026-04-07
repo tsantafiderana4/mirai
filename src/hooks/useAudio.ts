@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { UserProfile } from '../types';
 import { generateSpeech } from '../services/geminiService';
-import { CREDIT_COSTS } from '../services/creditService';
+import { CREDIT_COSTS, deductCredits } from '../services/creditService';
 import { useTranslation } from '../contexts/LanguageContext';
 
 function pcmToAudioBuffer(data: Uint8Array, ctx: AudioContext, sampleRate: number = 30000) {
@@ -44,6 +44,15 @@ export const useAudio = (user: UserProfile | null, notify: (m: string, t?: strin
             onShowPayment();
             return;
         }
+        
+        // Deduct credits
+        try {
+            await deductCredits(cost, user.id);
+        } catch (e) {
+            notify(t('chat.credit_deduction_error'), "error");
+            return;
+        }
+
         stopSpeaking();
         setIsLoadingAudio(true);
         setSpeakingMessageId(id);
