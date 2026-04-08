@@ -86,8 +86,7 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, user }) => {
         username: user.username,
         type: 'credit',
         amount: credits,
-        transactionRef: `Mobile Money (${selectedOperator.toUpperCase()}). Réf: ${reference}`,
-        additionalInfo: '' 
+        message: `Mobile Money (${selectedOperator.toUpperCase()}). Réf: ${reference}`
       });
       setIsSuccess(true);
       setTimeout(() => {

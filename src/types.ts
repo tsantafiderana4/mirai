@@ -118,6 +118,10 @@ export interface SystemSettings {
     airtel: string;
     orange: string;
   };
+  apiKeys?: {
+    gemini?: string;
+    [key: string]: string | undefined;
+  };
   updatedAt: number;
 }
 

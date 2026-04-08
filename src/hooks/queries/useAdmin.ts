@@ -34,7 +34,7 @@ export const useAdmin = () => {
                 username: r.username,
                 type: r.type,
                 amount: r.amount,
-                transactionRef: r.transaction_ref,
+                message: r.message,
                 status: r.status,
                 createdAt: new Date(r.created_at).getTime()
             })) as AdminRequest[];
@@ -46,21 +46,64 @@ export const useAdmin = () => {
         queryFn: async () => {
             const { data, error } = await supabase.from('system_settings').select('*').single();
             if (error && error.code !== 'PGRST116') throw error;
-            return (data && data.settings) ? data.settings as SystemSettings : {
+            
+            if (data) {
+                // Extract apiKeys from admin_contact if it exists there
+                const adminContactData = data.admin_contact || {};
+                const apiKeys = adminContactData.apiKeys || {};
+                
+                // Clean up adminContact to not include apiKeys in the UI if we want to separate them
+                const cleanAdminContact = {
+                    telma: adminContactData.telma || '',
+                    airtel: adminContactData.airtel || '',
+                    orange: adminContactData.orange || ''
+                };
+
+                return {
+                    creditPrice: data.credit_price || 10,
+                    validTransactionRefs: data.valid_coupons || [],
+                    adminContact: cleanAdminContact,
+                    apiKeys: apiKeys,
+                    updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : Date.now()
+                } as SystemSettings;
+            }
+
+            return {
                 creditPrice: 10,
                 validTransactionRefs: [],
                 adminContact: { telma: '', airtel: '', orange: '' },
+                apiKeys: {},
                 updatedAt: Date.now()
-            };
+            } as SystemSettings;
         }
     });
 
     const updateSettings = useMutation({
         mutationFn: async (newSettings: SystemSettings) => {
-            const { error } = await supabase.from('system_settings').upsert({ id: 1, settings: newSettings });
+            // Merge apiKeys into admin_contact for storage
+            const adminContactWithKeys = {
+                ...newSettings.adminContact,
+                apiKeys: newSettings.apiKeys || {}
+            };
+
+            const { error } = await supabase.from('system_settings').upsert({ 
+                id: 1, 
+                credit_price: newSettings.creditPrice,
+                valid_coupons: newSettings.validTransactionRefs,
+                admin_contact: adminContactWithKeys,
+                updated_at: new Date().toISOString()
+            });
             if (error) throw error;
         },
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'settings'] })
+    });
+
+    const addCredits = useMutation({
+        mutationFn: async ({ userId, amount }: { userId: string, amount: number }) => {
+            const { error } = await supabase.rpc('admin_add_credits', { p_user_id: userId, p_amount: amount });
+            if (error) throw error;
+        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'users'] })
     });
 
     const updateUser = useMutation({
@@ -89,6 +132,7 @@ export const useAdmin = () => {
         isLoading: usersQuery.isLoading || requestsQuery.isLoading || settingsQuery.isLoading,
         updateSettings: updateSettings.mutateAsync,
         updateUser: updateUser.mutateAsync,
+        addCredits: addCredits.mutateAsync,
         resolveRequest: resolveRequest.mutateAsync,
         refetchAll: () => {
             usersQuery.refetch();

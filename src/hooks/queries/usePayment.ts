@@ -5,17 +5,15 @@ export const usePayment = () => {
     const queryClient = useQueryClient();
 
     const sendAdminRequest = useMutation({
-        mutationFn: async ({ userId, username, type, amount, transactionRef, additionalInfo }: {
-            userId: string, username: string, type: string, amount: number, transactionRef: string, additionalInfo: string
+        mutationFn: async ({ userId, username, type, amount, message }: {
+            userId: string, username: string, type: string, amount?: number, message?: string
         }) => {
             const { error } = await supabase.from('admin_requests').insert({
-                id: crypto.randomUUID(),
                 user_id: userId,
                 username,
                 type,
                 amount,
-                transaction_ref: transactionRef,
-                additional_info: additionalInfo,
+                message,
                 status: 'pending'
             });
             if (error) throw error;
@@ -25,11 +23,10 @@ export const usePayment = () => {
     const validateCoupon = useMutation({
         mutationFn: async ({ userId, code }: { userId: string, code: string }) => {
             // 1. Get settings to check valid coupons
-            const { data: settingsData, error: settingsError } = await supabase.from('system_settings').select('settings').single();
+            const { data: settingsData, error: settingsError } = await supabase.from('system_settings').select('valid_coupons').single();
             if (settingsError) throw settingsError;
             
-            const settings = settingsData.settings;
-            const validCoupons = settings.validCoupons || [];
+            const validCoupons = settingsData.valid_coupons || [];
             const couponIndex = validCoupons.findIndex((c: any) => c.code === code);
             
             if (couponIndex === -1) {
@@ -51,7 +48,7 @@ export const usePayment = () => {
             // 3. Remove coupon
             validCoupons.splice(couponIndex, 1);
             await supabase.from('system_settings').update({
-                settings: { ...settings, validCoupons }
+                valid_coupons: validCoupons
             }).eq('id', 1);
             
             return coupon.amount;

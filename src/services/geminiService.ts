@@ -5,6 +5,35 @@ import { useAppStore } from '../store/useAppStore';
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { deductCredits } from "./creditService";
 
+// Cache the API key to avoid querying DB on every request
+let cachedApiKey: string | null = null;
+let lastKeyFetch: number = 0;
+
+export async function getGeminiApiKey(): Promise<string> {
+    // Return cached key if fetched recently (within 5 minutes)
+    if (cachedApiKey && Date.now() - lastKeyFetch < 5 * 60 * 1000) {
+        return cachedApiKey;
+    }
+
+    try {
+        const { data, error } = await supabase.from('system_settings').select('admin_contact').single();
+        if (!error && data?.admin_contact?.apiKeys?.gemini) {
+            cachedApiKey = data.admin_contact.apiKeys.gemini;
+            lastKeyFetch = Date.now();
+            return cachedApiKey!;
+        }
+    } catch (e) {
+        console.warn("Could not fetch API key from DB, falling back to env", e);
+    }
+
+    // Fallback to env
+    const envKey = process.env.GEMINI_API_KEY;
+    if (!envKey) {
+        throw new Error("Clé API Gemini non configurée (ni en DB ni en variable d'environnement).");
+    }
+    return envKey;
+}
+
 const SUPPORT_QUOTA_KEY = 'tm_support_quota';
 
 const canUseSupportAgent = (): boolean => {
@@ -71,8 +100,7 @@ export const generateSupportResponse = async (
         
         const prompt = `Historique de conversation:\n${history.map(h => `${h.role}: ${h.text}`).join('\n')}\n\nQuestion actuelle: ${userQuery}`;
 
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) throw new Error("Clé API Gemini non configurée.");
+        const apiKey = await getGeminiApiKey();
         const ai = new GoogleGenAI({ apiKey });
 
         const response = await ai.models.generateContent({
@@ -116,8 +144,7 @@ export async function* sendMessageStream(
 
       const finalMessage = contextPrompt ? `Contexte précédent:\n${contextPrompt}\n\nNouveau message de l'élève: ${message}` : message;
       
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error("Clé API Gemini non configurée.");
+      const apiKey = await getGeminiApiKey();
       const ai = new GoogleGenAI({ apiKey });
 
       const responseStream = await ai.models.generateContentStream({
@@ -161,13 +188,11 @@ export const generateSpeech = async (text: string, voiceName: string = 'Kore'): 
     
     // Fonction pour récupérer une clé API de manière dynamique
     const getApiKey = async (): Promise<string> => {
-        const { data, error } = await supabase.rpc('get_active_api_keys', { p_provider: 'gemini' });
-        if (!error && data && data.length > 0) {
-            // Rotation intelligente : sélection aléatoire parmi les clés actives
-            return data[Math.floor(Math.random() * data.length)].key_value;
+        try {
+            return await getGeminiApiKey();
+        } catch (e) {
+            return '';
         }
-        // Fallback sur l'ENV
-        return process.env.GEMINI_API_KEY || '';
     };
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -241,8 +266,7 @@ export const extractVocabulary = async (history: ChatMessage[]): Promise<any[]> 
     const prompt = `Based on the following conversation, extract 3 to 5 key vocabulary words. Return JSON array [{word, translation, example}].\n${context}`;
 
     try {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) throw new Error("Clé API Gemini non configurée.");
+        const apiKey = await getGeminiApiKey();
         const ai = new GoogleGenAI({ apiKey });
 
         const response = await ai.models.generateContent({
@@ -285,8 +309,7 @@ export const generateExerciseFromHistory = async (history: ChatMessage[], user: 
     const prompt = `Génère 3 exercices (QCM/Vrai-Faux) pour niveau ${user.preferences?.level} (${user.preferences?.targetLanguage}). Format JSON Array.`;
 
     try {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) throw new Error("Clé API Gemini non configurée.");
+        const apiKey = await getGeminiApiKey();
         const ai = new GoogleGenAI({ apiKey });
 
         const response = await ai.models.generateContent({
@@ -337,8 +360,7 @@ export const generateRoleplayResponse = async (
     const finalPrompt = isClosing ? `${contextPrompt}\n\nÉvaluation finale` : (contextPrompt || "Start");
 
     try {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) throw new Error("Clé API Gemini non configurée.");
+        const apiKey = await getGeminiApiKey();
         const ai = new GoogleGenAI({ apiKey });
 
         const response = await ai.models.generateContent({
@@ -380,8 +402,7 @@ export const generateRoleplayResponse = async (
 // 7. GENERIC TEXT GENERATION
 export const generateText = async (prompt: string): Promise<string> => {
     try {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) throw new Error("Clé API Gemini non configurée.");
+        const apiKey = await getGeminiApiKey();
         const ai = new GoogleGenAI({ apiKey });
 
         const response = await ai.models.generateContent({
