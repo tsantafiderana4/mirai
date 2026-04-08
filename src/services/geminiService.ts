@@ -5,22 +5,40 @@ import { useAppStore } from '../store/useAppStore';
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { deductCredits } from "./creditService";
 
-// Cache the API key to avoid querying DB on every request
-let cachedApiKey: string | null = null;
+// Cache the API keys to avoid querying DB on every request
+let cachedApiKeys: string[] = [];
+let currentKeyIndex = 0;
 let lastKeyFetch: number = 0;
 
 export async function getGeminiApiKey(): Promise<string> {
     // Return cached key if fetched recently (within 5 minutes)
-    if (cachedApiKey && Date.now() - lastKeyFetch < 5 * 60 * 1000) {
-        return cachedApiKey;
+    if (cachedApiKeys.length > 0 && Date.now() - lastKeyFetch < 5 * 60 * 1000) {
+        const key = cachedApiKeys[currentKeyIndex];
+        currentKeyIndex = (currentKeyIndex + 1) % cachedApiKeys.length;
+        return key;
     }
 
     try {
         const { data, error } = await supabase.from('system_settings').select('admin_contact').single();
-        if (!error && data?.admin_contact?.apiKeys?.gemini) {
-            cachedApiKey = data.admin_contact.apiKeys.gemini;
-            lastKeyFetch = Date.now();
-            return cachedApiKey!;
+        if (!error && data?.admin_contact?.apiKeys) {
+            const keys = data.admin_contact.apiKeys;
+            let fetchedKeys: string[] = [];
+            
+            if (keys.geminiKeys && Array.isArray(keys.geminiKeys) && keys.geminiKeys.length > 0) {
+                fetchedKeys = keys.geminiKeys;
+            } else if (keys.gemini) {
+                fetchedKeys = [keys.gemini];
+            }
+            
+            if (fetchedKeys.length > 0) {
+                cachedApiKeys = fetchedKeys;
+                lastKeyFetch = Date.now();
+                currentKeyIndex = 0;
+                
+                const key = cachedApiKeys[currentKeyIndex];
+                currentKeyIndex = (currentKeyIndex + 1) % cachedApiKeys.length;
+                return key;
+            }
         }
     } catch (e) {
         console.warn("Could not fetch API key from DB, falling back to env", e);

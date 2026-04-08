@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile, SystemSettings } from '../types';
 import { Users, CreditCard, Settings, Search, Save, MessageSquare, Plus, Minus, RefreshCw, Banknote, Shield, Loader2, Trash2, CheckCircle, X, Info, Activity } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import { useAdmin } from '../hooks/queries/useAdmin';
 
 interface AdminDashboardProps {
@@ -16,8 +17,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'requests' | 'coupons' | 'settings'>('overview');
   const [search, setSearch] = useState('');
   
-  const { users, requests, settings: fetchedSettings, isLoading, updateSettings, updateUser, addCredits, resolveRequest, refetchAll } = useAdmin();
-  const [localSettings, setLocalSettings] = useState<SystemSettings | undefined>(undefined);
+  const { users, requests, settings: fetchedSettings, isLoading, updateSettings, updateUser, updateUserAuth, addCredits, resolveRequest, refetchAll } = useAdmin();
+  const [localSettings, setLocalSettings] = useState<SystemSettings | undefined>(fetchedSettings);
 
   // Sync local settings when fetchedSettings changes
   useEffect(() => {
@@ -29,11 +30,30 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
   // New State for Coupon Generation
   const [newTransactionRef, setNewTransactionRef] = useState('');
   const [couponAmount, setCouponAmount] = useState<number>(10);
+  const [couponExpiresAt, setCouponExpiresAt] = useState<string>('');
 
   const [manualCreditInputs, setManualCreditInputs] = useState<Record<string, string>>({});
+  
+  // State for editing user auth
+  const [editingUser, setEditingUser] = useState<string | null>(null);
+  const [editEmail, setEditEmail] = useState('');
+  const [editPassword, setEditPassword] = useState('');
 
   const refreshData = async () => {
       await refetchAll();
+  };
+
+  const handleSaveUserAuth = async (userId: string) => {
+      try {
+          await updateUserAuth({ userId, email: editEmail, password: editPassword });
+          notify("Informations de l'utilisateur mises à jour.", 'success');
+          setEditingUser(null);
+          setEditEmail('');
+          setEditPassword('');
+      } catch (e) {
+          console.error(e);
+          notify("Erreur lors de la mise à jour des informations.", 'error');
+      }
   };
 
   const handleManualCreditChange = (userId: string, val: string) => {
@@ -115,7 +135,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
       const newCoupon = {
           code: rawCode.toUpperCase(),
           amount: couponAmount,
-          createdAt: new Date().toISOString()
+          createdAt: new Date().toISOString(),
+          expiresAt: couponExpiresAt ? new Date(couponExpiresAt).toISOString() : undefined
       };
 
       // Handle fallback if validTransactionRefs is undefined
@@ -243,28 +264,60 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                 
                 <div className="grid grid-cols-1 gap-3">
                     {filteredUsers.map(user => (
-                        <div key={user.id} className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-white/5 flex flex-col sm:flex-row justify-between gap-4 shadow-sm hover:border-indigo-500/30 transition-all">
-                            <div className="flex justify-between items-start sm:w-1/3">
-                                <div>
-                                    <div className="font-black text-slate-800 dark:text-white text-lg">{user.username}</div>
-                                    <div className="text-xs text-slate-400 font-mono mt-1">{user.email || 'Pas d\'email'}</div>
+                        <div key={user.id} className="bg-white dark:bg-slate-900 p-4 rounded-3xl border border-slate-200 dark:border-white/5 flex flex-col gap-4 shadow-sm hover:border-indigo-500/30 transition-all">
+                            <div className="flex flex-col sm:flex-row justify-between gap-4">
+                                <div className="flex justify-between items-start sm:w-1/3">
+                                    <div>
+                                        <div className="font-black text-slate-800 dark:text-white text-lg">{user.username}</div>
+                                        <div className="text-xs text-slate-400 font-mono mt-1">{user.email || 'Pas d\'email'}</div>
+                                    </div>
+                                    <div className="sm:hidden font-black text-indigo-600 text-xl bg-indigo-50 dark:bg-indigo-900/20 px-3 py-1 rounded-xl border border-indigo-100 dark:border-indigo-800">{user.credits} CRD</div>
                                 </div>
-                                <div className="sm:hidden font-black text-indigo-600 text-xl bg-indigo-50 dark:bg-indigo-900/20 px-3 py-1 rounded-xl border border-indigo-100 dark:border-indigo-800">{user.credits} CRD</div>
+                                
+                                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between sm:w-2/3 gap-4">
+                                    <div className="hidden sm:block font-black text-indigo-600 text-xl bg-indigo-50 dark:bg-indigo-900/20 px-4 py-2 rounded-xl border border-indigo-100 dark:border-indigo-800 text-center min-w-[100px]">{user.credits} CRD</div>
+                                    
+                                    <div className="flex items-center gap-2 flex-1">
+                                        <input type="number" placeholder="0" value={manualCreditInputs[user.id] || ''} onChange={(e) => handleManualCreditChange(user.id, e.target.value)} className="w-full sm:w-24 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-center font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
+                                        <button onClick={() => executeManualCredit(user.id, 1)} className="p-3 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-colors shadow-sm"><Plus className="w-5 h-5"/></button>
+                                        <button onClick={() => executeManualCredit(user.id, -1)} className="p-3 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors shadow-sm"><Minus className="w-5 h-5"/></button>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-2">
+                                        <button onClick={() => {
+                                            setEditingUser(editingUser === user.id ? null : user.id);
+                                            setEditEmail(user.email || '');
+                                            setEditPassword('');
+                                        }} className="p-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shadow-sm">
+                                            <Settings className="w-5 h-5"/>
+                                        </button>
+                                        <button onClick={() => toggleSuspend(user)} className={`px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest border transition-all whitespace-nowrap ${user.isSuspended ? 'border-red-500 text-red-500 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/30' : 'border-emerald-500 text-emerald-500 bg-emerald-50 dark:bg-emerald-900/10 hover:bg-emerald-100 dark:hover:bg-emerald-900/30'}`}>
+                                            {user.isSuspended ? 'Suspendu' : 'Actif'}
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                             
-                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between sm:w-2/3 gap-4">
-                                <div className="hidden sm:block font-black text-indigo-600 text-xl bg-indigo-50 dark:bg-indigo-900/20 px-4 py-2 rounded-xl border border-indigo-100 dark:border-indigo-800 text-center min-w-[100px]">{user.credits} CRD</div>
-                                
-                                <div className="flex items-center gap-2 flex-1">
-                                    <input type="number" placeholder="0" value={manualCreditInputs[user.id] || ''} onChange={(e) => handleManualCreditChange(user.id, e.target.value)} className="w-full sm:w-24 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-center font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
-                                    <button onClick={() => executeManualCredit(user.id, 1)} className="p-3 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-colors shadow-sm"><Plus className="w-5 h-5"/></button>
-                                    <button onClick={() => executeManualCredit(user.id, -1)} className="p-3 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors shadow-sm"><Minus className="w-5 h-5"/></button>
+                            {/* Edit User Auth Section */}
+                            {editingUser === user.id && (
+                                <div className="mt-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
+                                    <h4 className="text-sm font-bold mb-3">Modifier les informations de connexion</h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">Email</label>
+                                            <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="Nouvel email" className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 outline-none focus:ring-2 focus:ring-indigo-500" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">Nouveau mot de passe</label>
+                                            <input type="password" value={editPassword} onChange={(e) => setEditPassword(e.target.value)} placeholder="Laisser vide pour ne pas changer" className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 outline-none focus:ring-2 focus:ring-indigo-500" />
+                                        </div>
+                                    </div>
+                                    <div className="mt-4 flex justify-end gap-2">
+                                        <button onClick={() => setEditingUser(null)} className="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600 transition-colors">Annuler</button>
+                                        <button onClick={() => handleSaveUserAuth(user.id)} className="px-4 py-2 rounded-xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors">Enregistrer</button>
+                                    </div>
                                 </div>
-                                
-                                <button onClick={() => toggleSuspend(user)} className={`px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest border transition-all whitespace-nowrap ${user.isSuspended ? 'border-red-500 text-red-500 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/30' : 'border-emerald-500 text-emerald-500 bg-emerald-50 dark:bg-emerald-900/10 hover:bg-emerald-100 dark:hover:bg-emerald-900/30'}`}>
-                                    {user.isSuspended ? 'Suspendu' : 'Actif'}
-                                </button>
-                            </div>
+                            )}
                         </div>
                     ))}
                     {filteredUsers.length === 0 && (
@@ -362,6 +415,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                                 className="w-full p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-center text-lg transition-all"
                             />
                         </div>
+                        <div className="flex-1">
+                            <label className="text-xs font-bold text-slate-400 uppercase ml-2 mb-2 block tracking-wider">Expiration (Optionnel)</label>
+                            <input 
+                                type="date" 
+                                value={couponExpiresAt} 
+                                onChange={e => setCouponExpiresAt(e.target.value)} 
+                                className="w-full p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-center text-lg transition-all"
+                            />
+                        </div>
                         <div className="flex items-end">
                             <button onClick={handleAddCoupon} className="w-full md:w-auto h-[60px] px-8 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl shadow-lg shadow-emerald-600/20 transition-all flex items-center justify-center gap-2">
                                 <Plus className="w-5 h-5"/> Créer
@@ -391,6 +453,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                                             : (ref.code || '???')}
                                     </span>
                                     <span className="text-xs text-slate-400 font-medium">Créé le {new Date(ref.createdAt).toLocaleDateString()}</span>
+                                    {ref.expiresAt && (
+                                        <span className="text-[10px] font-bold text-red-400 uppercase">
+                                            Expire: {new Date(ref.expiresAt).toLocaleDateString()}
+                                        </span>
+                                    )}
                                 </div>
                                 <div className="flex items-center gap-3 shrink-0">
                                     <span className="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-3 py-1 rounded-lg text-sm font-black border border-emerald-200 dark:border-emerald-800">{ref.amount} CRD</span>
@@ -429,20 +496,117 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
 
                 <div className="mb-10">
                     <h4 className="text-sm font-bold text-slate-400 uppercase mb-4 tracking-widest flex items-center gap-2">
-                        <Settings className="w-4 h-4"/> Clés API (Sécurisé)
+                        <Settings className="w-4 h-4"/> Clés API Gemini (Rotation Automatique)
                     </h4>
                     <div className="space-y-4">
                         <div className="space-y-2">
-                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest block ml-2">Clé API Gemini (Google)</label>
-                            <input 
-                                type="password" 
-                                placeholder="AIzaSy..." 
-                                value={localSettings?.apiKeys?.gemini || ''} 
-                                onChange={e => setLocalSettings(prev => prev ? {...prev, apiKeys: {...(prev.apiKeys || {}), gemini: e.target.value}, updatedAt: Date.now()} : undefined)} 
-                                className="w-full p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl font-mono text-sm border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none transition-all" 
-                            />
-                            <p className="text-xs text-slate-500 ml-2">Cette clé sera utilisée en priorité par rapport à la variable d'environnement.</p>
+                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest block ml-2">Ajouter une clé API</label>
+                            <div className="flex gap-2">
+                                <input 
+                                    type="password" 
+                                    placeholder="AIzaSy..." 
+                                    id="newGeminiKeyInput"
+                                    className="flex-1 p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl font-mono text-sm border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none transition-all" 
+                                />
+                                <button 
+                                    onClick={async () => {
+                                        const input = document.getElementById('newGeminiKeyInput') as HTMLInputElement;
+                                        if (input && input.value.trim()) {
+                                            const newKey = input.value.trim();
+                                            const { error } = await supabase.from('api_keys').insert({ key: newKey });
+                                            if (error) {
+                                                notify("Erreur lors de l'ajout de la clé.", 'error');
+                                                return;
+                                            }
+                                            setLocalSettings(prev => {
+                                                if (!prev) return prev;
+                                                const currentKeys = prev.apiKeys?.geminiKeys || [];
+                                                return {
+                                                    ...prev,
+                                                    apiKeys: {
+                                                        ...prev.apiKeys,
+                                                        geminiKeys: [...currentKeys, newKey]
+                                                    },
+                                                    updatedAt: Date.now()
+                                                };
+                                            });
+                                            input.value = '';
+                                            notify("Clé ajoutée.", 'success');
+                                        }
+                                    }}
+                                    className="px-6 py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl transition-colors"
+                                >
+                                    Ajouter
+                                </button>
+                            </div>
+                            <p className="text-xs text-slate-500 ml-2">Ces clés seront utilisées à tour de rôle (rotation) pour éviter de dépasser les quotas.</p>
                         </div>
+                        
+                        {/* List of keys */}
+                        {localSettings?.apiKeys?.geminiKeys && localSettings.apiKeys.geminiKeys.length > 0 && (
+                            <div className="mt-4 space-y-2">
+                                <label className="text-xs font-black text-slate-400 uppercase tracking-widest block ml-2">Clés configurées ({localSettings.apiKeys.geminiKeys.length})</label>
+                                {localSettings.apiKeys.geminiKeys.map((key, idx) => (
+                                    <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                                        <div className="font-mono text-sm text-slate-600 dark:text-slate-300">
+                                            {key.substring(0, 10)}...{key.substring(key.length - 4)}
+                                        </div>
+                                        <button 
+                                            onClick={async () => {
+                                                const { error } = await supabase.from('api_keys').delete().eq('key', key);
+                                                if (error) {
+                                                    notify("Erreur lors de la suppression.", 'error');
+                                                    return;
+                                                }
+                                                setLocalSettings(prev => {
+                                                    if (!prev || !prev.apiKeys?.geminiKeys) return prev;
+                                                    const newKeys = [...prev.apiKeys.geminiKeys];
+                                                    newKeys.splice(idx, 1);
+                                                    return {
+                                                        ...prev,
+                                                        apiKeys: {
+                                                            ...prev.apiKeys,
+                                                            geminiKeys: newKeys
+                                                        },
+                                                        updatedAt: Date.now()
+                                                    };
+                                                });
+                                                notify("Clé supprimée.", 'success');
+                                            }}
+                                            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        
+                        {/* Legacy single key migration */}
+                        {localSettings?.apiKeys?.gemini && (!localSettings?.apiKeys?.geminiKeys || localSettings.apiKeys.geminiKeys.length === 0) && (
+                            <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
+                                <p className="text-sm text-amber-800 dark:text-amber-300 font-medium mb-2">Une ancienne clé unique a été détectée. Voulez-vous la migrer vers le nouveau système de rotation ?</p>
+                                <button 
+                                    onClick={() => {
+                                        setLocalSettings(prev => {
+                                            if (!prev || !prev.apiKeys?.gemini) return prev;
+                                            return {
+                                                ...prev,
+                                                apiKeys: {
+                                                    ...prev.apiKeys,
+                                                    geminiKeys: [prev.apiKeys.gemini],
+                                                    gemini: undefined // Remove legacy key
+                                                },
+                                                updatedAt: Date.now()
+                                            };
+                                        });
+                                    }}
+                                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors"
+                                >
+                                    Migrer la clé
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
 

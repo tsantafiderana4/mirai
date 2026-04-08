@@ -1,9 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
 import { UserProfile, SystemSettings, AdminRequest } from '../../types';
+import { useEffect } from 'react';
 
 export const useAdmin = () => {
     const queryClient = useQueryClient();
+
+    const cleanupOldRequests = async () => {
+        const oneWeekAgo = new Date();
+        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+        await supabase.from('admin_requests').delete().lt('created_at', oneWeekAgo.toISOString());
+    };
+
+    useEffect(() => {
+        cleanupOldRequests();
+    }, []);
 
     const usersQuery = useQuery({
         queryKey: ['admin', 'users'],
@@ -117,6 +128,18 @@ export const useAdmin = () => {
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'users'] })
     });
 
+    const updateUserAuth = useMutation({
+        mutationFn: async ({ userId, email, password }: { userId: string, email?: string, password?: string }) => {
+            const { error } = await supabase.rpc('admin_update_user_auth', {
+                p_user_id: userId,
+                p_email: email || null,
+                p_password: password || null
+            });
+            if (error) throw error;
+        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'users'] })
+    });
+
     const resolveRequest = useMutation({
         mutationFn: async ({ reqId, status }: { reqId: string, status: 'approved' | 'rejected' }) => {
             const { error } = await supabase.from('admin_requests').update({ status }).eq('id', reqId);
@@ -132,6 +155,7 @@ export const useAdmin = () => {
         isLoading: usersQuery.isLoading || requestsQuery.isLoading || settingsQuery.isLoading,
         updateSettings: updateSettings.mutateAsync,
         updateUser: updateUser.mutateAsync,
+        updateUserAuth: updateUserAuth.mutateAsync,
         addCredits: addCredits.mutateAsync,
         resolveRequest: resolveRequest.mutateAsync,
         refetchAll: () => {

@@ -108,6 +108,7 @@ export interface CouponCode {
   code: string;
   amount: number;
   createdAt: string;
+  expiresAt?: string;
 }
 
 export interface SystemSettings {
@@ -120,7 +121,8 @@ export interface SystemSettings {
   };
   apiKeys?: {
     gemini?: string;
-    [key: string]: string | undefined;
+    geminiKeys?: string[];
+    [key: string]: any;
   };
   updatedAt: number;
 }

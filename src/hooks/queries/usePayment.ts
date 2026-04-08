@@ -22,36 +22,10 @@ export const usePayment = () => {
 
     const validateCoupon = useMutation({
         mutationFn: async ({ userId, code }: { userId: string, code: string }) => {
-            // 1. Get settings to check valid coupons
-            const { data: settingsData, error: settingsError } = await supabase.from('system_settings').select('valid_coupons').single();
-            if (settingsError) throw settingsError;
-            
-            const validCoupons = settingsData.valid_coupons || [];
-            const couponIndex = validCoupons.findIndex((c: any) => c.code === code);
-            
-            if (couponIndex === -1) {
-                throw new Error("Code invalide ou expiré.");
-            }
-            
-            const coupon = validCoupons[couponIndex];
-            
-            // 2. Add credits to user
-            const { data: userData, error: userError } = await supabase.from('profiles').select('credits').eq('id', userId).single();
-            if (userError) throw userError;
-            
-            const { error: updateError } = await supabase.from('profiles').update({
-                credits: userData.credits + coupon.amount
-            }).eq('id', userId);
-            
-            if (updateError) throw updateError;
-            
-            // 3. Remove coupon
-            validCoupons.splice(couponIndex, 1);
-            await supabase.from('system_settings').update({
-                valid_coupons: validCoupons
-            }).eq('id', 1);
-            
-            return coupon.amount;
+            const { data, error } = await supabase.rpc('use_coupon', { p_user_id: userId, p_code: code });
+            if (error) throw error;
+            if (!data.success) throw new Error(data.message);
+            return data.amount;
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: ['userProfile', variables.userId] });
