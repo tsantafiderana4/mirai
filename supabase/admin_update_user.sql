@@ -10,12 +10,12 @@ CREATE OR REPLACE FUNCTION admin_update_user_auth(
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, auth, extensions
 AS $$
 BEGIN
   -- Check if the current user is an admin
   IF NOT EXISTS (
-    SELECT 1 FROM profiles 
+    SELECT 1 FROM public.profiles 
     WHERE id = auth.uid() AND role = 'admin'
   ) THEN
     RAISE EXCEPTION 'Unauthorized: Only admins can perform this action';

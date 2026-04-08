@@ -25,16 +25,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
   // Sync local settings when fetchedSettings changes
   useEffect(() => {
       if (fetchedSettings) {
-          setLocalSettings(fetchedSettings);
+          setLocalSettings(prev => {
+              if (JSON.stringify(prev) === JSON.stringify(fetchedSettings)) return prev;
+              return fetchedSettings;
+          });
       }
   }, [fetchedSettings]);
 
   useEffect(() => {
       const fetchKeys = async () => {
           setIsLoadingKeys(true);
-          const { data, error } = await supabase.from('api_keys').select('key');
+          const { data, error } = await supabase.from('api_keys').select('key_value');
           if (!error && data) {
-              setApiKeys(data.map(k => k.key));
+              setApiKeys(data.map(k => k.key_value));
           }
           setIsLoadingKeys(false);
       };
@@ -64,8 +67,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
           setEditingUser(null);
           setEditEmail('');
           setEditPassword('');
-      } catch (e) {
-          console.error(e);
+      } catch (_e) {
+          console.error(_e);
           notify("Erreur lors de la mise à jour des informations.", 'error');
       }
   };
@@ -84,8 +87,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                   await addCredits({ userId, amount: finalAmt });
                   setManualCreditInputs(prev => ({ ...prev, [userId]: '' })); 
                   notify(`Crédits modifiés: ${finalAmt > 0 ? '+' : ''}${finalAmt}`, 'success');
-              } catch (e) {
-                  console.error(e);
+              } catch (_e) {
+                  console.error(_e);
                   notify("Échec de la mise à jour des crédits.", 'error');
               }
           }
@@ -96,9 +99,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
       try {
           await updateUser({ ...user, isSuspended: !user.isSuspended });
           notify(`Utilisateur ${!user.isSuspended ? 'suspendu' : 'réactivé'}.`, 'info');
-      } catch (e) {
-          console.error(e);
-          notify("Échec de la suspension.", 'error');
+      } catch (_e) {
+          console.error(_e);
+          notify(`Échec de la suspension.`, 'error');
       }
   };
 
@@ -112,8 +115,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
           }
           
           notify(`Demande ${status === 'approved' ? 'approuvée' : 'rejetée'}.`, 'success');
-      } catch (e) {
-          console.error(e);
+      } catch (_e) {
+          console.error(_e);
           notify("Erreur lors de la résolution.", 'error');
       }
   };
@@ -123,8 +126,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
       try {
           await updateSettings(localSettings);
           notify("Paramètres sauvegardés dans le Cloud.", 'success');
-      } catch (e) {
-          console.error(e);
+      } catch (_e) {
+          console.error(_e);
           notify("Erreur lors de la sauvegarde. Vérifiez les permissions DB.", 'error');
       }
   };
@@ -171,8 +174,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
           await updateSettings(updatedSettings);
           setNewTransactionRef('');
           notify(`Coupon créé : ${newCoupon.code} (${newCoupon.amount} CRD)`, 'success');
-      } catch (e) {
-          console.error(e);
+      } catch (_e) {
+          console.error(_e);
           notify("Erreur serveur : Coupon non sauvegardé.", 'error');
       }
   };
@@ -186,8 +189,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
       try {
           await updateSettings(updatedSettings);
           notify("Coupon supprimé.", 'info');
-      } catch (e) {
-          console.error(e);
+      } catch (_e) {
+          console.error(_e);
           notify("Erreur lors de la suppression.", 'error');
       }
   };
@@ -518,6 +521,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                 <div className="mb-10">
                     <h4 className="text-sm font-bold text-slate-400 uppercase mb-4 tracking-widest flex items-center gap-2">
                         <Settings className="w-4 h-4"/> Clés API Gemini (Rotation Automatique)
+                        {isLoadingKeys && <Loader2 className="w-3 h-3 animate-spin text-indigo-500" />}
                     </h4>
                     <div className="space-y-4">
                         <div className="space-y-2">
@@ -534,7 +538,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                                         const input = document.getElementById('newGeminiKeyInput') as HTMLInputElement;
                                         if (input && input.value.trim()) {
                                             const newKey = input.value.trim();
-                                            const { error } = await supabase.from('api_keys').insert({ key: newKey });
+                                            const { error } = await supabase.from('api_keys').insert({ key_value: newKey });
                                             if (error) {
                                                 console.error("Supabase error:", error);
                                                 notify(`Erreur lors de l'ajout de la clé: ${error.message}`, 'error');
@@ -564,7 +568,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                                         </div>
                                         <button 
                                             onClick={async () => {
-                                                const { error } = await supabase.from('api_keys').delete().eq('key', key);
+                                                const { error } = await supabase.from('api_keys').delete().eq('key_value', key);
                                                 if (error) {
                                                     console.error("Supabase error:", error);
                                                     notify(`Erreur lors de la suppression: ${error.message}`, 'error');

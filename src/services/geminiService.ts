@@ -19,6 +19,24 @@ export async function getGeminiApiKey(): Promise<string> {
     }
 
     try {
+        // 1. Try to fetch from dedicated api_keys table (New System)
+        const { data: tableKeys, error: tableError } = await supabase
+            .from('api_keys')
+            .select('key_value')
+            .eq('is_active', true)
+            .eq('provider', 'gemini');
+
+        if (!tableError && tableKeys && tableKeys.length > 0) {
+            cachedApiKeys = tableKeys.map(k => k.key_value);
+            lastKeyFetch = Date.now();
+            currentKeyIndex = 0;
+            
+            const key = cachedApiKeys[currentKeyIndex];
+            currentKeyIndex = (currentKeyIndex + 1) % cachedApiKeys.length;
+            return key;
+        }
+
+        // 2. Fallback to system_settings (Old System)
         const { data, error } = await supabase.from('system_settings').select('admin_contact').single();
         if (!error && data?.admin_contact?.apiKeys) {
             const keys = data.admin_contact.apiKeys;
@@ -44,7 +62,7 @@ export async function getGeminiApiKey(): Promise<string> {
         console.warn("Could not fetch API key from DB, falling back to env", e);
     }
 
-    // Fallback to env
+    // 3. Fallback to env
     const envKey = process.env.GEMINI_API_KEY;
     if (!envKey) {
         throw new Error("Clé API Gemini non configurée (ni en DB ni en variable d'environnement).");
