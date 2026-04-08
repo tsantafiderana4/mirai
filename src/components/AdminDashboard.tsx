@@ -17,7 +17,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'requests' | 'coupons' | 'settings'>('overview');
   const [search, setSearch] = useState('');
   
-  const { users, requests, settings: fetchedSettings, isLoading, updateSettings, updateUser, updateUserAuth, addCredits, resolveRequest, refetchAll } = useAdmin();
+  const { users, requests, settings: fetchedSettings, coupons, isLoading, updateSettings, updateUser, updateUserAuth, addCredits, resolveRequest, addCoupon, removeCoupon, refetchAll } = useAdmin();
   const [localSettings, setLocalSettings] = useState<SystemSettings | undefined>(fetchedSettings);
   const [apiKeys, setApiKeys] = useState<string[]>([]);
   const [isLoadingKeys, setIsLoadingKeys] = useState(true);
@@ -134,11 +134,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
 
   // --- COUPON MANAGEMENT ---
   const handleAddCoupon = async () => {
-      if (!localSettings) return;
-      // 1. Sanitize Input: Prevent users from pasting JSON or weird characters
+      // 1. Sanitize Input
       const rawCode = newTransactionRef.trim();
       
-      // Basic sanitization
       if (rawCode.startsWith('{') || rawCode.includes('"') || rawCode.length > 30) {
           notify("Format invalide. Entrez un code simple (ex: PROMO10).", 'error');
           return;
@@ -149,45 +147,24 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
           return;
       }
       
-      const newCoupon = {
-          code: rawCode.toUpperCase(),
-          amount: couponAmount,
-          createdAt: new Date().toISOString(),
-          expiresAt: couponExpiresAt ? new Date(couponExpiresAt).toISOString() : undefined
-      };
-
-      // Handle fallback if validTransactionRefs is undefined
-      const currentRefs = localSettings.validTransactionRefs || [];
-
-      // Prevent duplicate codes
-      if (currentRefs.some(c => c.code === newCoupon.code)) {
-          notify("Ce code existe déjà.", 'error');
-          return;
-      }
-
-      const updatedSettings = { 
-          ...localSettings, 
-          validTransactionRefs: [...currentRefs, newCoupon] 
-      };
-      
       try {
-          await updateSettings(updatedSettings);
+          await addCoupon({
+              code: rawCode.toUpperCase(),
+              amount: couponAmount,
+              expiresAt: couponExpiresAt ? new Date(couponExpiresAt).getTime() : undefined
+          });
           setNewTransactionRef('');
-          notify(`Coupon créé : ${newCoupon.code} (${newCoupon.amount} CRD)`, 'success');
-      } catch (_e) {
+          notify(`Coupon créé : ${rawCode.toUpperCase()} (${couponAmount} CRD)`, 'success');
+      } catch (_e: any) {
           console.error(_e);
-          notify("Erreur serveur : Coupon non sauvegardé.", 'error');
+          const msg = _e.message?.includes('unique constraint') ? "Ce code existe déjà." : "Erreur serveur : Coupon non sauvegardé.";
+          notify(msg, 'error');
       }
   };
 
-  const removeCoupon = async (codeToRemove: string) => {
-      if (!localSettings) return;
-      const updatedSettings = { 
-          ...localSettings, 
-          validTransactionRefs: (localSettings.validTransactionRefs || []).filter(c => c.code !== codeToRemove) 
-      };
+  const handleRemoveCoupon = async (codeToRemove: string) => {
       try {
-          await updateSettings(updatedSettings);
+          await removeCoupon(codeToRemove);
           notify("Coupon supprimé.", 'info');
       } catch (_e) {
           console.error(_e);
@@ -271,7 +248,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                         <Banknote className="w-5 h-5" />
                         <span className="text-sm font-bold uppercase tracking-widest">Coupons Actifs</span>
                     </div>
-                    <div className="text-4xl font-black text-emerald-500">{localSettings?.validTransactionRefs?.length || 0}</div>
+                    <div className="text-4xl font-black text-emerald-500">{coupons.length}</div>
                 </div>
             </div>
         )}
@@ -460,21 +437,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                 <div className="bg-white dark:bg-slate-900 p-6 sm:p-8 rounded-[2rem] shadow-sm border border-slate-200 dark:border-white/5">
                     <h4 className="text-sm font-bold text-slate-400 uppercase mb-6 tracking-widest flex items-center justify-between">
                         Coupons Actifs 
-                        <span className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-3 py-1 rounded-full text-xs">{localSettings?.validTransactionRefs?.length || 0}</span>
+                        <span className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-3 py-1 rounded-full text-xs">{coupons.length}</span>
                     </h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {localSettings?.validTransactionRefs?.length === 0 && (
+                        {coupons.length === 0 && (
                             <div className="col-span-full text-slate-400 text-sm italic text-center py-8 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700">
                                 Aucun coupon actif.
                             </div>
                         )}
-                        {localSettings?.validTransactionRefs?.map((ref, i) => (
+                        {coupons.map((ref, i) => (
                             <div key={i} className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl flex items-center justify-between gap-3 shadow-sm border border-slate-200 dark:border-slate-700 group hover:border-emerald-300 dark:hover:border-emerald-700 transition-colors">
                                 <div className="flex flex-col gap-1 overflow-hidden">
                                     <span className="font-mono font-bold text-slate-800 dark:text-slate-200 truncate" title={ref.code}>
-                                        {(ref.code && typeof ref.code === 'string' && ref.code.length > 20) 
-                                            ? ref.code.substring(0, 15) + '...' 
-                                            : (ref.code || '???')}
+                                        {ref.code}
                                     </span>
                                     <span className="text-xs text-slate-400 font-medium">Créé le {new Date(ref.createdAt).toLocaleDateString()}</span>
                                     {ref.expiresAt && (
@@ -485,7 +460,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                                 </div>
                                 <div className="flex items-center gap-3 shrink-0">
                                     <span className="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-3 py-1 rounded-lg text-sm font-black border border-emerald-200 dark:border-emerald-800">{ref.amount} CRD</span>
-                                    <button onClick={() => removeCoupon(ref.code)} className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors p-2 bg-white dark:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-600" title="Supprimer">
+                                    <button onClick={() => handleRemoveCoupon(ref.code)} className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors p-2 bg-white dark:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-600" title="Supprimer">
                                         <Trash2 className="w-4 h-4"/>
                                     </button>
                                 </div>

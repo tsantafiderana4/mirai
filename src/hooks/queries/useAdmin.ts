@@ -148,20 +148,58 @@ export const useAdmin = () => {
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'requests'] })
     });
 
+    const couponsQuery = useQuery({
+        queryKey: ['admin', 'coupons'],
+        queryFn: async () => {
+            const { data, error } = await supabase.from('coupons').select('*').order('created_at', { ascending: false });
+            if (error) throw error;
+            return data.map((c: any) => ({
+                code: c.code,
+                amount: c.amount,
+                expiresAt: c.expires_at ? new Date(c.expires_at).getTime() : null,
+                createdAt: new Date(c.created_at).getTime()
+            }));
+        }
+    });
+
+    const addCoupon = useMutation({
+        mutationFn: async (coupon: { code: string, amount: number, expiresAt?: number }) => {
+            const { error } = await supabase.from('coupons').insert({
+                code: coupon.code,
+                amount: coupon.amount,
+                expires_at: coupon.expiresAt ? new Date(coupon.expiresAt).toISOString() : null
+            });
+            if (error) throw error;
+        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'coupons'] })
+    });
+
+    const removeCoupon = useMutation({
+        mutationFn: async (code: string) => {
+            const { error } = await supabase.from('coupons').delete().eq('code', code);
+            if (error) throw error;
+        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'coupons'] })
+    });
+
     return {
         users: usersQuery.data || [],
         requests: requestsQuery.data || [],
         settings: settingsQuery.data,
-        isLoading: usersQuery.isLoading || requestsQuery.isLoading || settingsQuery.isLoading,
+        coupons: couponsQuery.data || [],
+        isLoading: usersQuery.isLoading || requestsQuery.isLoading || settingsQuery.isLoading || couponsQuery.isLoading,
         updateSettings: updateSettings.mutateAsync,
         updateUser: updateUser.mutateAsync,
         updateUserAuth: updateUserAuth.mutateAsync,
         addCredits: addCredits.mutateAsync,
         resolveRequest: resolveRequest.mutateAsync,
+        addCoupon: addCoupon.mutateAsync,
+        removeCoupon: removeCoupon.mutateAsync,
         refetchAll: () => {
             usersQuery.refetch();
             requestsQuery.refetch();
             settingsQuery.refetch();
+            couponsQuery.refetch();
         }
     };
 };
