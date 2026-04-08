@@ -19,12 +19,11 @@ BEGIN
     WHERE val->>'code' = p_code;
 
     IF v_coupon_index IS NULL THEN
-        RETURN jsonb_build_object('success', false, 'message', 'Code invalide.');
+        RETURN jsonb_build_object('success', false, 'message', 'Code invalide ou déjà utilisé.');
     END IF;
 
     v_coupon := v_coupons->(v_coupon_index::int - 1);
-    v_amount := (v_coupon->>'amount')::int;
-
+    
     -- 3. Check expiry
     IF v_coupon->>'expiresAt' IS NOT NULL AND (v_coupon->>'expiresAt')::timestamp < NOW() THEN
         -- Remove expired
@@ -33,13 +32,15 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'message', 'Code expiré.');
     END IF;
 
-    -- 4. Add credits
-    SELECT credits INTO v_user_credits FROM profiles WHERE id = p_user_id;
-    UPDATE profiles SET credits = v_user_credits + v_amount WHERE id = p_user_id;
+    v_amount := (v_coupon->>'amount')::int;
 
-    -- 5. Remove coupon
+    -- 4. Remove coupon IMMEDIATELY to prevent concurrent use
     v_coupons := v_coupons - (v_coupon_index::int - 1);
     UPDATE system_settings SET valid_coupons = v_coupons WHERE id = 1;
+
+    -- 5. Add credits
+    SELECT credits INTO v_user_credits FROM profiles WHERE id = p_user_id;
+    UPDATE profiles SET credits = v_user_credits + v_amount WHERE id = p_user_id;
 
     RETURN jsonb_build_object('success', true, 'amount', v_amount);
 END;

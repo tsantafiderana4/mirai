@@ -19,6 +19,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
   
   const { users, requests, settings: fetchedSettings, isLoading, updateSettings, updateUser, updateUserAuth, addCredits, resolveRequest, refetchAll } = useAdmin();
   const [localSettings, setLocalSettings] = useState<SystemSettings | undefined>(fetchedSettings);
+  const [apiKeys, setApiKeys] = useState<string[]>([]);
+  const [isLoadingKeys, setIsLoadingKeys] = useState(true);
 
   // Sync local settings when fetchedSettings changes
   useEffect(() => {
@@ -26,6 +28,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
           setLocalSettings(fetchedSettings);
       }
   }, [fetchedSettings]);
+
+  useEffect(() => {
+      const fetchKeys = async () => {
+          setIsLoadingKeys(true);
+          const { data, error } = await supabase.from('api_keys').select('key');
+          if (!error && data) {
+              setApiKeys(data.map(k => k.key));
+          }
+          setIsLoadingKeys(false);
+      };
+      fetchKeys();
+  }, []);
   
   // New State for Coupon Generation
   const [newTransactionRef, setNewTransactionRef] = useState('');
@@ -231,9 +245,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                 <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl shadow-sm border border-slate-200 dark:border-white/5 flex flex-col gap-2">
                     <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
                         <CreditCard className="w-5 h-5" />
-                        <span className="text-sm font-bold uppercase tracking-widest">Crédits Distribués</span>
+                        <span className="text-sm font-bold uppercase tracking-widest">Montant Total (Ar)</span>
                     </div>
-                    <div className="text-4xl font-black text-indigo-600">{users.reduce((acc, u) => acc + u.credits, 0)}</div>
+                    <div className="text-4xl font-black text-indigo-600">{(users.reduce((acc, u) => acc + u.credits, 0) * (localSettings?.creditPrice || 0)).toLocaleString()} Ar</div>
+                </div>
+                <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl shadow-sm border border-slate-200 dark:border-white/5 flex flex-col gap-2">
+                    <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
+                        <Settings className="w-5 h-5" />
+                        <span className="text-sm font-bold uppercase tracking-widest">Clés API</span>
+                    </div>
+                    <div className="text-4xl font-black text-slate-800 dark:text-white">{apiKeys.length}</div>
                 </div>
                 <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl shadow-sm border border-slate-200 dark:border-white/5 flex flex-col gap-2">
                     <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
@@ -515,21 +536,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                                             const newKey = input.value.trim();
                                             const { error } = await supabase.from('api_keys').insert({ key: newKey });
                                             if (error) {
-                                                notify("Erreur lors de l'ajout de la clé.", 'error');
+                                                console.error("Supabase error:", error);
+                                                notify(`Erreur lors de l'ajout de la clé: ${error.message}`, 'error');
                                                 return;
                                             }
-                                            setLocalSettings(prev => {
-                                                if (!prev) return prev;
-                                                const currentKeys = prev.apiKeys?.geminiKeys || [];
-                                                return {
-                                                    ...prev,
-                                                    apiKeys: {
-                                                        ...prev.apiKeys,
-                                                        geminiKeys: [...currentKeys, newKey]
-                                                    },
-                                                    updatedAt: Date.now()
-                                                };
-                                            });
+                                            setApiKeys(prev => [...prev, newKey]);
                                             input.value = '';
                                             notify("Clé ajoutée.", 'success');
                                         }
@@ -543,10 +554,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                         </div>
                         
                         {/* List of keys */}
-                        {localSettings?.apiKeys?.geminiKeys && localSettings.apiKeys.geminiKeys.length > 0 && (
+                        {apiKeys.length > 0 && (
                             <div className="mt-4 space-y-2">
-                                <label className="text-xs font-black text-slate-400 uppercase tracking-widest block ml-2">Clés configurées ({localSettings.apiKeys.geminiKeys.length})</label>
-                                {localSettings.apiKeys.geminiKeys.map((key, idx) => (
+                                <label className="text-xs font-black text-slate-400 uppercase tracking-widest block ml-2">Clés configurées ({apiKeys.length})</label>
+                                {apiKeys.map((key, idx) => (
                                     <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
                                         <div className="font-mono text-sm text-slate-600 dark:text-slate-300">
                                             {key.substring(0, 10)}...{key.substring(key.length - 4)}
@@ -555,22 +566,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                                             onClick={async () => {
                                                 const { error } = await supabase.from('api_keys').delete().eq('key', key);
                                                 if (error) {
-                                                    notify("Erreur lors de la suppression.", 'error');
+                                                    console.error("Supabase error:", error);
+                                                    notify(`Erreur lors de la suppression: ${error.message}`, 'error');
                                                     return;
                                                 }
-                                                setLocalSettings(prev => {
-                                                    if (!prev || !prev.apiKeys?.geminiKeys) return prev;
-                                                    const newKeys = [...prev.apiKeys.geminiKeys];
-                                                    newKeys.splice(idx, 1);
-                                                    return {
-                                                        ...prev,
-                                                        apiKeys: {
-                                                            ...prev.apiKeys,
-                                                            geminiKeys: newKeys
-                                                        },
-                                                        updatedAt: Date.now()
-                                                    };
-                                                });
+                                                setApiKeys(prev => prev.filter((_, i) => i !== idx));
                                                 notify("Clé supprimée.", 'success');
                                             }}
                                             className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
@@ -579,32 +579,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                                         </button>
                                     </div>
                                 ))}
-                            </div>
-                        )}
-                        
-                        {/* Legacy single key migration */}
-                        {localSettings?.apiKeys?.gemini && (!localSettings?.apiKeys?.geminiKeys || localSettings.apiKeys.geminiKeys.length === 0) && (
-                            <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
-                                <p className="text-sm text-amber-800 dark:text-amber-300 font-medium mb-2">Une ancienne clé unique a été détectée. Voulez-vous la migrer vers le nouveau système de rotation ?</p>
-                                <button 
-                                    onClick={() => {
-                                        setLocalSettings(prev => {
-                                            if (!prev || !prev.apiKeys?.gemini) return prev;
-                                            return {
-                                                ...prev,
-                                                apiKeys: {
-                                                    ...prev.apiKeys,
-                                                    geminiKeys: [prev.apiKeys.gemini],
-                                                    gemini: undefined // Remove legacy key
-                                                },
-                                                updatedAt: Date.now()
-                                            };
-                                        });
-                                    }}
-                                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors"
-                                >
-                                    Migrer la clé
-                                </button>
                             </div>
                         )}
                     </div>
