@@ -94,7 +94,7 @@ const incrementSupportUsage = () => {
 // Nouvelle fonction pour facturer le LiveTeacher
 export const chargeVoiceMinute = async (): Promise<boolean> => {
     try {
-        const { data: newCredits, error: rpcError } = await supabase.rpc('consume_credits', { p_amount: CREDIT_COSTS.VOICE_CALL });
+        const { data: newCredits, error: rpcError } = await supabase.rpc('consume_credits', { p_amount: CREDIT_COSTS.VOICE_CALL_PER_MINUTE });
         if (rpcError) {
             console.error('[Billing Error]', rpcError);
             return false;
@@ -201,16 +201,10 @@ export async function* sendMessageStream(
       
       console.log("[Gemini] Stream completed successfully.");
 
-      // Deduct credits based on session type
-      let cost = 0;
-      if (sessionType === 'lesson') cost = CREDIT_COSTS.LESSON;
-      else if (sessionType === 'dialogue') cost = CREDIT_COSTS.DIALOGUE_MESSAGE;
-      
-      if (cost > 0) {
-          const newCredits = await deductCredits(cost, user.id);
-          if (newCredits !== null) {
-              useAppStore.getState().updateUserCredits(newCredits);
-          }
+      // Deduct credits (1 credit for text generation)
+      const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
+      if (newCredits !== null) {
+          useAppStore.getState().updateUserCredits(newCredits);
       }
 
   } catch (e: any) {
@@ -267,8 +261,20 @@ export const generateSpeech = async (text: string, voiceName: string = 'Kore'): 
                 throw new Error("No audio data received.");
             }
 
-            // NOTE: Credit deduction is handled by the caller (useAudio hook)
-            // to avoid double billing and ensure UI consistency.
+            // Deduct credits directly via RPC (Reduced to 1 credit)
+            /*
+            const userId = useAppStore.getState().user?.id;
+            if (userId) {
+                const newCredits = await deductCredits(CREDIT_COSTS.AUDIO_PRONUNCIATION, userId);
+                if (newCredits !== null) {
+                    useAppStore.getState().updateUserCredits(newCredits);
+                } else {
+                    throw new Error("Crédits insuffisants");
+                }
+            } else {
+                throw new Error("Utilisateur non authentifié");
+            }
+            */
 
             const binaryString = atob(base64Audio);
             const len = binaryString.length;
@@ -321,15 +327,7 @@ export const extractVocabulary = async (history: ChatMessage[]): Promise<any[]> 
         });
 
         const rawData = JSON.parse(response.text || "[]");
-
-        // Deduct credits (1 credit per question)
-        const cost = rawData.length * CREDIT_COSTS.EXERCISE_QUESTION;
-        const newCredits = await deductCredits(cost, user.id);
-        if (newCredits === null) {
-            throw new Error("CREDITS_EXHAUSTED");
-        }
-        useAppStore.getState().updateUserCredits(newCredits);
-
+        
         return rawData.map((item: any) => ({
             id: crypto.randomUUID(),
             word: item.word,
@@ -375,21 +373,8 @@ export const generateExerciseFromHistory = async (history: ChatMessage[], user: 
             }
         });
         
-        const exercises = JSON.parse(response.text || "[]");
-
-        // Deduct credits (1 credit per question)
-        const cost = exercises.length * CREDIT_COSTS.EXERCISE_QUESTION;
-        const newCredits = await deductCredits(cost, user.id);
-        if (newCredits === null) {
-            throw new Error("CREDITS_EXHAUSTED");
-        }
-        useAppStore.getState().updateUserCredits(newCredits);
-
-        return exercises;
-    } catch (e: any) {
-        if (e.message === "CREDITS_EXHAUSTED") {
-            throw e;
-        }
+        return JSON.parse(response.text || "[]");
+    } catch (e) {
         return [];
     }
 };
@@ -436,7 +421,7 @@ export const generateRoleplayResponse = async (
             }
         });
 
-        // Deduct credits (1 credit for dialogue response)
+        // Deduct credits (1 credit for text generation)
         const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
         if (newCredits === null) {
             throw new Error("CREDITS_EXHAUSTED");

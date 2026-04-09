@@ -6,7 +6,7 @@ interface Props {
     messages: ChatMessage[];
     speakingMessageId: string | null;
     isLoadingAudio: boolean;
-    onPlayAudio: (text: string, id: string) => void;
+    onPlayAudio: (text: string, id: string, cost: number) => void;
     onStopAudio: () => void;
     onExit: () => void;
 }

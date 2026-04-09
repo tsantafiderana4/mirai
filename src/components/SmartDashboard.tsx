@@ -13,6 +13,7 @@ import ExamResultView from '../modules/SmartExam/components/ExamResult';
 import { ExamResultDetailed } from '../modules/SmartExam/types';
 import { useTranslation } from '../contexts/LanguageContext';
 import { useAppStore } from '../store/useAppStore';
+import { supabase } from '../lib/supabase';
 import MarkdownRenderer from './MarkdownRenderer';
 import { LearningSession } from '../types';
 
@@ -48,6 +49,8 @@ const SmartDashboard: React.FC<Props> = ({
   const [startWithCert, setStartWithCert] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [editName, setEditName] = useState(user?.username || '');
+  const [editEmail, setEditEmail] = useState(user?.email || '');
+  const [editPassword, setEditPassword] = useState('');
   const [editTeacherName, setEditTeacherName] = useState(user?.preferences?.teacherName || 'TeacherMada');
   const [editVoiceName, setEditVoiceName] = useState<VoiceName>(user?.preferences?.voiceName || 'Kore');
 
@@ -118,6 +121,7 @@ const SmartDashboard: React.FC<Props> = ({
       const updated: UserProfile = { 
           ...user, 
           username: editName,
+          email: editEmail,
           preferences: {
               ...(user.preferences || {}),
               teacherName: editTeacherName.trim() || 'TeacherMada',
@@ -125,6 +129,14 @@ const SmartDashboard: React.FC<Props> = ({
           } as any
       };
       await updateProfile(updated);
+      
+      if (editEmail !== user.email) {
+          await supabase.auth.updateUser({ email: editEmail });
+      }
+      if (editPassword) {
+          await supabase.auth.updateUser({ password: editPassword });
+      }
+      
       setUser(updated);
       toast.success(t('common.success'));
       setActiveTab('menu');
@@ -895,6 +907,25 @@ const SmartDashboard: React.FC<Props> = ({
                             />
                         </div>
                         <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-500 uppercase ml-2">Email</label>
+                            <input 
+                                type="email" 
+                                value={editEmail} 
+                                onChange={e => setEditEmail(e.target.value)} 
+                                className="w-full p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold border-transparent border focus:bg-white dark:focus:bg-slate-900 transition-all"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-500 uppercase ml-2">{t('auth.password_label')}</label>
+                            <input 
+                                type="password" 
+                                value={editPassword} 
+                                onChange={e => setEditPassword(e.target.value)} 
+                                placeholder="Laisser vide pour ne pas changer"
+                                className="w-full p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold border-transparent border focus:bg-white dark:focus:bg-slate-900 transition-all"
+                            />
+                        </div>
+                        <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase ml-2">{t('dashboard.teacher_name') || 'Nom du Professeur'}</label>
                             <input 
                                 type="text" 
@@ -938,7 +969,7 @@ const SmartDashboard: React.FC<Props> = ({
       </div>
 
       {/* Exam Result Modal */}
-      {selectedResult && user && (
+      {selectedResult && (
           <ExamResultView result={selectedResult} user={user} onClose={() => setSelectedResult(null)} initialShowCert={startWithCert} />
       )}
     </div>

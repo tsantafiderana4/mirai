@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { UserProfile } from '../types';
 import { useAuth } from '../hooks/queries/useAuth';
-import { GraduationCap, ArrowRight, Sun, Moon, Mail, Lock, User, ArrowLeft, HelpCircle, Phone, X, Send, AlertTriangle } from 'lucide-react';
+import { GraduationCap, ArrowRight, Sun, Moon, Mail, Lock, User, ArrowLeft, HelpCircle, Phone, X, Send, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import LegalModal from './LegalModals';
 import { useTranslation } from '../contexts/LanguageContext';
 
@@ -22,6 +22,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
   const [email, setEmail] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   const [showForgotModal, setShowForgotModal] = useState(false);
@@ -53,7 +54,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
     try {
         let user;
         if (isRegisteringMode) {
-            user = await register({ id: username, pass: password, email });
+            user = await register({ id: username, pass: password, email, phoneNumber });
         } else {
             user = await login({ id: username, pass: password });
         }
@@ -194,7 +195,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
             <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-1.5 ml-3 tracking-widest uppercase">{t('auth.password_label')}</label>
             <div className="relative group">
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-indigo-500 transition-colors"><Lock className="w-full h-full" /></div>
-                <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t('auth.password_placeholder')} className="w-full bg-slate-50 dark:bg-slate-800/50 text-slate-800 dark:text-white rounded-2xl pl-12 pr-4 py-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:focus:border-indigo-400 transition-all border border-slate-200 dark:border-slate-700 font-medium placeholder:text-slate-400 text-sm" />
+                <input type={showPassword ? "text" : "password"} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t('auth.password_placeholder')} className="w-full bg-slate-50 dark:bg-slate-800/50 text-slate-800 dark:text-white rounded-2xl pl-12 pr-12 py-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:focus:border-indigo-400 transition-all border border-slate-200 dark:border-slate-700 font-medium placeholder:text-slate-400 text-sm" />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-indigo-500 transition-colors">
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
             </div>
             {!isRegisteringMode && (
                 <div className="flex justify-end mt-2">

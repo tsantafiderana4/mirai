@@ -6,13 +6,14 @@ const formatLoginEmail = (input: string) => {
     const trimmed = input.trim();
     if (trimmed.includes('@')) return trimmed;
     const cleanId = trimmed.replace(/[^a-zA-Z0-9.\-_+]/g, '');
-    return `${cleanId}@teachermada.com`;
+    return `${cleanId}@gmail.com`;
 };
 
-const createDefaultProfilePayload = (id: string, username: string, email: string) => ({
+const createDefaultProfilePayload = (id: string, username: string, email: string, phoneNumber?: string) => ({
     id,
     username,
     email,
+    phone_number: phoneNumber,
     role: 'user',
     credits: 10,
     preferences: {
@@ -37,7 +38,7 @@ export const useAuth = () => {
                 const { data } = await supabase
                     .from('profiles')
                     .select('email')
-                    .eq('username', email)
+                    .or(`username.eq.${email},phone_number.eq.${email}`)
                     .single();
                 
                 if (data && data.email) {
@@ -99,7 +100,7 @@ export const useAuth = () => {
     });
 
     const registerMutation = useMutation({
-        mutationFn: async ({ id, pass, email }: { id: string, pass: string, email?: string }) => {
+        mutationFn: async ({ id, pass, email, phoneNumber }: { id: string, pass: string, email?: string, phoneNumber?: string }) => {
             const finalEmail = email ? email.trim() : formatLoginEmail(id);
             const username = id.trim();
             
@@ -127,7 +128,7 @@ export const useAuth = () => {
 
             if (profileError || !profileData) {
                 // Auto-create profile if it doesn't exist
-                const payload = createDefaultProfilePayload(authData.user.id, username, finalEmail);
+                const payload = createDefaultProfilePayload(authData.user.id, username, finalEmail, phoneNumber);
                 const { data: newProfile, error: insertError } = await supabase
                     .from('profiles')
                     .insert([payload])
