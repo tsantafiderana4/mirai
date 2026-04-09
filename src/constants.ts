@@ -375,14 +375,20 @@ Accessible en cliquant sur l'avatar en haut à droite. C'est le panneau de contr
 TeacherMada fonctionne sur une économie de crédits pour financer les coûts serveurs.
 
 ### 💎 Économie
-*   **1 Message (leçon)** = 1 Crédit.
-*   **1 Exercice** = 1 Crédit.
+*   **1 Leçon (génération)** = 2 Crédits.
+*   **1 Prononciation (mot/phrase)** = 1 Crédit.
+*   **1 Lecture audio (message complet)** = 2 Crédits.
+*   **1 Exercice** = 1 Crédit par question.
+*   **1 Dialogue** = 1 Crédit par réponse IA.
 *   **1 Minute d'Appel Vocal** = 5 Crédits.
-*   **1 Explication audio** = 1 Crédit.
+*   **1 Diagnostic** = 40 Crédits.
+*   **1 Examen** = 100 Crédits.
+*   **1 Déblocage Certificat** = 100 Crédits.
 
 ### 💳 Rechargement (Paiement)
 Le système simule un paiement Mobile Money (très populaire à Madagascar).
 1.  L'utilisateur choisit un montant parmi : **2 000 Ar**, **5 000 Ar**, **10 000 Ar**, ou **20 000 Ar**.
+2.  Le taux est de **1 Crédit = 50 Ar**.
 2.  La modale affiche les numéros **Telma/Mvola**, **Airtel**, **Orange** (Nom: Tsanta Fiderana).
 3.  L'utilisateur effectue le transfert réel sur son téléphone ou via Cash point.
 4.  L'utilisateur entre la **Référence de transaction** (reçue par SMS) dans l'app et valide.

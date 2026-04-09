@@ -5,11 +5,11 @@ export const CREDIT_COSTS = {
   AUDIO_MESSAGE: 2,
   AUDIO_PRONUNCIATION: 1,
   DIALOGUE_MESSAGE: 1,
-  EXERCISE: 5,
-  VOICE_CALL_PER_MINUTE: 5,
+  EXERCISE_QUESTION: 1,
+  VOICE_CALL: 5,
   DIAGNOSTIC: 40,
   EXAM: 100,
-  CERTIFICATE: 100,
+  CERTIFICATE_UNLOCK: 100,
 };
 
 export async function deductCredits(amount: number, userId: string): Promise<number | null> {

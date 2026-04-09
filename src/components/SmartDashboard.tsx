@@ -938,8 +938,8 @@ const SmartDashboard: React.FC<Props> = ({
       </div>
 
       {/* Exam Result Modal */}
-      {selectedResult && (
-          <ExamResultView result={selectedResult} onClose={() => setSelectedResult(null)} initialShowCert={startWithCert} />
+      {selectedResult && user && (
+          <ExamResultView result={selectedResult} user={user} onClose={() => setSelectedResult(null)} initialShowCert={startWithCert} />
       )}
     </div>
   );

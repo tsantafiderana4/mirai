@@ -198,9 +198,9 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
       return () => clearInterval(interval);
   }, [status]);
 
-  // Billing Effect : Triggered every 60s
+  // Billing Effect : Triggered at 5s and then every 60s (65s, 125s, etc.)
   useEffect(() => {
-      if (duration > 0 && duration % 60 === 0) {
+      if (duration === 5 || (duration > 5 && (duration - 5) % 60 === 0)) {
           processBilling();
       }
   }, [duration]);
@@ -211,7 +211,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
       if (success) {
           const { data: updatedUser } = await refetch();
           if (updatedUser) onUpdateUser(updatedUser);
-          notify(`- 3 Crédits`, "info");
+          notify(`- 5 Crédits`, "info");
       } else {
           notify("Crédits épuisés ! Fin de l'appel.", "error");
           handleHangup();
@@ -225,19 +225,14 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
       // Ensure clean slate
       cleanupAudio();
 
-      // 1. Check & Deduct for First Minute immediately
-      const deducted = await chargeVoiceMinute();
-      if (!deducted) {
-          notify(`Il faut des crédits pour démarrer.`, "error");
+      // We now deduct at 5 seconds into the call as per new rules
+      // But we still check if user has enough credits to start
+      if (user.credits < 5) {
+          notify(`Il faut au moins 5 crédits pour démarrer l'appel.`, "error");
           onShowPayment();
           onClose();
           return;
       }
-      
-      // Update local user state immediately
-      const { data: updatedUser } = await refetch();
-      if (updatedUser) onUpdateUser(updatedUser);
-      notify(`- 3 Crédits (1ère minute)`, "info");
 
       setStatus('connecting');
       setSubStatus("Initialisation Audio...");

@@ -1,23 +1,48 @@
 
 import React from 'react';
 import { ExamResultDetailed } from '../types';
-import { CheckCircle, XCircle, Download, Share2, Award, ChevronRight, Target, TrendingUp, AlertTriangle } from 'lucide-react';
+import { Award, Target, TrendingUp, AlertTriangle, Lock, Loader2 } from 'lucide-react';
 import CertificateView from './Certificate';
 import { useTranslation } from '../../../contexts/LanguageContext';
+import { unlockCertificate } from '../SmartExamService';
+import { UserProfile } from '../../../types';
+import { CREDIT_COSTS } from '../../../services/creditService';
+import { toast } from '../../../components/Toaster';
 
 interface Props {
     result: ExamResultDetailed;
+    user: UserProfile;
     onClose: () => void;
     initialShowCert?: boolean;
 }
 
-const ExamResult: React.FC<Props> = ({ result, onClose, initialShowCert = false }) => {
+const ExamResult: React.FC<Props> = ({ result, user, onClose, initialShowCert = false }) => {
     const { t } = useTranslation();
-    const [showCert, setShowCert] = React.useState(initialShowCert && !!result.certificateId);
+    const [certId, setCertId] = React.useState<string | undefined>(result.certificateId);
+    const [showCert, setShowCert] = React.useState(initialShowCert && !!certId);
+    const [isUnlocking, setIsUnlocking] = React.useState(false);
 
-    if (showCert && result.certificateId) {
-        return <CertificateView result={result} onClose={() => setShowCert(false)} />;
+    if (showCert && certId) {
+        return <CertificateView result={{ ...result, certificateId: certId }} onClose={() => setShowCert(false)} />;
     }
+
+    const handleUnlock = async () => {
+        if (isUnlocking) return;
+        setIsUnlocking(true);
+        try {
+            const newCertId = await unlockCertificate(result, user);
+            if (newCertId) {
+                setCertId(newCertId);
+                toast.success("Certificat débloqué avec succès !");
+            } else {
+                toast.error("Échec du déblocage. Vérifiez vos crédits.");
+            }
+        } catch (e) {
+            toast.error("Une erreur est survenue.");
+        } finally {
+            setIsUnlocking(false);
+        }
+    };
 
     const formatFeedback = (text: string) => {
         if (!text) return null;
@@ -131,9 +156,23 @@ const ExamResult: React.FC<Props> = ({ result, onClose, initialShowCert = false 
                         </div>
 
                         <div className="flex flex-col sm:flex-row gap-4">
-                            {result.passed && result.certificateId && (
+                            {result.passed && certId && (
                                 <button onClick={() => setShowCert(true)} className="flex-1 py-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black rounded-2xl shadow-xl shadow-emerald-500/20 transition-all flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-95">
                                     <Award className="w-6 h-6" /> {t('exam.download_certificate')}
+                                </button>
+                            )}
+                            {result.passed && !certId && (
+                                <button 
+                                    onClick={handleUnlock} 
+                                    disabled={isUnlocking || user.credits < CREDIT_COSTS.CERTIFICATE_UNLOCK}
+                                    className={`flex-1 py-4 font-black rounded-2xl shadow-xl transition-all flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-95 ${user.credits >= CREDIT_COSTS.CERTIFICATE_UNLOCK ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-indigo-500/20' : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'}`}
+                                >
+                                    {isUnlocking ? (
+                                        <Loader2 className="w-6 h-6 animate-spin" />
+                                    ) : (
+                                        <Lock className="w-6 h-6" />
+                                    )}
+                                    {t('exam.unlock_certificate') || "Débloquer Certificat"} ({CREDIT_COSTS.CERTIFICATE_UNLOCK} CRD)
                                 </button>
                             )}
                             <button onClick={onClose} className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95">

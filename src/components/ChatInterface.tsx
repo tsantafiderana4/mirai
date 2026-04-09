@@ -128,9 +128,9 @@ const ChatInterface: React.FC<Props> = ({
 
   const handleVoiceCallClick = async () => {
       if (!user) return;
-      const allowed = user.credits >= CREDIT_COSTS.VOICE_CALL_PER_MINUTE; 
+      const allowed = user.credits >= CREDIT_COSTS.VOICE_CALL; 
       if (!allowed) {
-          notify(t('chat.voice_call_min_credits', { cost: CREDIT_COSTS.VOICE_CALL_PER_MINUTE }), "error");
+          notify(t('chat.voice_call_min_credits', { cost: CREDIT_COSTS.VOICE_CALL }), "error");
           onShowPayment();
           return;
       }

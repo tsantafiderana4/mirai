@@ -3,7 +3,7 @@ import { Type } from "@google/genai";
 import { UserProfile } from "../../types";
 import { SmartExam, ExamResultDetailed, ExamType } from "./types";
 import { TEXT_MODEL, generateText } from "../../services/geminiService"; // Use generateText or expose callGeminiFunction if needed, but better to use existing services or refactor
-import { CREDIT_COSTS } from "../../services/creditService";
+import { CREDIT_COSTS, deductCredits } from "../../services/creditService";
 import { supabase } from "../../lib/supabase"; // Import supabase to call edge function directly if needed, or better, add a helper in geminiService
 import { useAppStore } from "../../store/useAppStore";
 
@@ -215,34 +215,20 @@ export const SmartExamService = {
             const evalData = data.json || {};
             const passed = (evalData.globalScore || 0) >= 70; // Seuil strict
 
+            // NOTE: Certificate is NOT created automatically anymore.
+            // User must pay 100 credits to unlock it if passed.
             let certId = undefined;
-            if (exam.type === 'certification' && passed) {
-                certId = `CERT-${Date.now().toString(36).toUpperCase()}-${user.id.slice(0,4).toUpperCase()}`;
-                // Save Cert
-                try {
-                    await supabase.from('certificates').insert([{
-                        id: certId,
-                        user_id: user.id,
-                        user_name: user.username,
-                        user_full_name: user.username,
-                        language: user.preferences?.targetLanguage || "Inconnu",
-                        level: exam.targetLevel,
-                        score: evalData.globalScore,
-                        type: 'certification'
-                    }]);
-                } catch (e) {
-                    console.error("Error saving certificate", e);
-                }
 
-                // Notification
+            if (exam.type === 'certification' && passed) {
+                // Notification for passing (but not certificate yet)
                 try {
                     await supabase.from('notifications').insert([{
                         id: crypto.randomUUID(),
                         user_id: user.id,
                         type: 'achievement',
-                        title: 'Certification Validée !',
-                        message: `Félicitations ! Vous avez obtenu le certificat ${exam.targetLevel} en ${user.preferences?.targetLanguage}.`,
-                        data: { certificateId: certId }
+                        title: 'Examen Réussi !',
+                        message: `Félicitations ! Vous avez réussi l'examen ${exam.targetLevel}. Vous pouvez maintenant débloquer votre certificat.`,
+                        data: { examId: exam.id }
                     }]);
                 } catch (e) {
                     console.error("Error saving notification", e);
@@ -301,5 +287,56 @@ export const SmartExamService = {
             console.error("Eval Error", e);
             throw new Error("Erreur lors de la correction.");
         }
+    }
+};
+
+/**
+ * Unlocks a certificate for a passed exam
+ */
+export const unlockCertificate = async (result: ExamResultDetailed, user: UserProfile): Promise<string | null> => {
+    if (!result.passed) return null;
+    
+    try {
+        // 1. Deduct credits
+        const newCredits = await deductCredits(CREDIT_COSTS.CERTIFICATE_UNLOCK, user.id);
+        if (newCredits === null) return null;
+        useAppStore.getState().updateUserCredits(newCredits);
+
+        // 2. Create Cert ID
+        const certId = `CERT-${Date.now().toString(36).toUpperCase()}-${user.id.slice(0,4).toUpperCase()}`;
+
+        // 3. Save to certificates table
+        const { error: certError } = await supabase.from('certificates').insert([{
+            id: certId,
+            user_id: user.id,
+            user_name: user.username,
+            user_full_name: user.username,
+            language: result.language || "Inconnu",
+            level: result.detectedLevel,
+            score: result.globalScore,
+            type: 'certification'
+        }]);
+
+        if (certError) throw certError;
+
+        // 4. Update exam_results with certificate_id
+        await supabase.from('exam_results')
+            .update({ certificate_id: certId })
+            .eq('id', result.examId);
+
+        // 5. Notification
+        await supabase.from('notifications').insert([{
+            id: crypto.randomUUID(),
+            user_id: user.id,
+            type: 'achievement',
+            title: 'Certificat Débloqué !',
+            message: `Votre certificat ${result.detectedLevel} est maintenant disponible.`,
+            data: { certificateId: certId }
+        }]);
+
+        return certId;
+    } catch (e) {
+        console.error("Error unlocking certificate:", e);
+        return null;
     }
 };

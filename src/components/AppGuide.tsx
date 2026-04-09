@@ -39,8 +39,8 @@ const AppGuide: React.FC<AppGuideProps> = ({ onClose }) => {
           </p>
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 text-center">
-              <div className="font-black text-lg text-slate-800 dark:text-white">1 Crédit</div>
-              <div className="text-xs text-slate-500 uppercase tracking-wide">Par message Chat</div>
+              <div className="font-black text-lg text-slate-800 dark:text-white">2 Crédits</div>
+              <div className="text-xs text-slate-500 uppercase tracking-wide">Par Leçon Chat</div>
             </div>
             <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 text-center">
               <div className="font-black text-lg text-slate-800 dark:text-white">5 Crédits</div>

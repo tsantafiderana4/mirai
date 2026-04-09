@@ -102,7 +102,7 @@ const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment, 
     }
 
     if (view === 'result' && result) {
-        return <ExamResult result={result} onClose={onClose} />;
+        return <ExamResult result={result} user={user} onClose={onClose} />;
     }
 
     return (
