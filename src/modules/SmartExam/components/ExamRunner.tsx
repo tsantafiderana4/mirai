@@ -59,6 +59,14 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
         return !!localStorage.getItem(`exam_started_${exam.id}`);
     });
 
+    useEffect(() => {
+        return () => {
+            if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+                audioCtxRef.current.close().catch(() => {});
+            }
+        };
+    }, []);
+
     const currentSection = exam.sections[currentSectionIndex];
     const progress = ((currentSectionIndex + 1) / exam.sections.length) * 100;
 
@@ -122,21 +130,6 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                         
                         // Problem: 'resultIndex' increments.
                         // If we use setAnswers(prev => prev + final), we are fine.
-                        
-                        let newText = currentText;
-                        
-                        // We need to handle the case where we are replacing the previous interim with the new interim/final
-                        // This is hard with just a string.
-                        // Let's use a Ref to track the text at the start of the 'result' event? No.
-                        
-                        // Alternative: Just append 'final' to the state. 
-                        // For 'interim', we can't easily "preview" it in the same string without risking duplication if we don't track where it started.
-                        // User complaint: "bonjourbonjour".
-                        // This implies we are appending interim results repeatedly.
-                        
-                        // FIX: Only handle FINAL results for the textarea to be safe and clean.
-                        // Interim results can be shown in a separate floating overlay or just ignored if quality is bad.
-                        // User wants "transcrire bien".
                         
                         if (final) {
                              return {
@@ -248,6 +241,7 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                     audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate: 24000});
                 }
                 const ctx = audioCtxRef.current;
+                if (ctx.state === 'closed') return;
                 if (ctx.state === 'suspended') await ctx.resume();
 
                 const audioBuffer = pcmToAudioBuffer(new Uint8Array(pcmBuffer), ctx, 24000);

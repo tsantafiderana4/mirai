@@ -155,9 +155,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
           });
           setNewTransactionRef('');
           notify(`Coupon créé : ${rawCode.toUpperCase()} (${couponAmount} CRD)`, 'success');
-      } catch (_e: any) {
-          console.error(_e);
-          const msg = _e.message?.includes('unique constraint') ? "Ce code existe déjà." : "Erreur serveur : Coupon non sauvegardé.";
+      } catch (_e) {
+          const err = _e as any;
+          console.error(err);
+          const msg = err.message?.includes('unique constraint') ? "Ce code existe déjà." : "Erreur serveur : Coupon non sauvegardé.";
           notify(msg, 'error');
       }
   };

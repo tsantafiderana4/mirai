@@ -172,7 +172,7 @@ TeacherMada fonctionne sur une économie de crédits pour financer les coûts se
 
 ### 💎 Économie
 *   **1 Message Chat** = 1 Crédit.
-*   **1 Exercice** = 1 Crédit.
+*   **1 Exercice** = 5 Crédits.
 *   **1 Minute d'Appel Vocal** = 5 Crédits.
 *   **1 Audio (TTS)** = 1 Crédit.
 

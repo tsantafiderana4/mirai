@@ -378,7 +378,7 @@ TeacherMada fonctionne sur une économie de crédits pour financer les coûts se
 *   **1 Leçon (génération)** = 2 Crédits.
 *   **1 Prononciation (mot/phrase)** = 1 Crédit.
 *   **1 Lecture audio (message complet)** = 2 Crédits.
-*   **1 Exercice** = 1 Crédit par question.
+*   **1 Exercice** = 5 Crédits par session.
 *   **1 Dialogue** = 1 Crédit par réponse IA.
 *   **1 Minute d'Appel Vocal** = 5 Crédits.
 *   **1 Diagnostic** = 40 Crédits.

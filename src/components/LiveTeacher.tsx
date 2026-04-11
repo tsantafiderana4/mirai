@@ -73,42 +73,6 @@ const floatTo16BitPCM = (input: Float32Array) => {
     return btoa(binary);
 };
 
-const getDisconnectMessage = (code: number | undefined, reason: string | undefined, ctxState: string) => {
-    let base = "Connexion interrompue";
-    let detail = "";
-
-    switch (code) {
-        case 1000:
-            base = "Session terminée normalement";
-            break;
-        case 1001:
-            base = "Page fermée ou rechargée";
-            break;
-        case 1002:
-            base = "Erreur de protocole";
-            break;
-        case 1006:
-            base = "Perte de connexion réseau";
-            detail = "(WebSocket fermé anormalement)";
-            break;
-        case 1008:
-            base = "Accès refusé (Code 1008)";
-            detail = "Vérifiez votre clé API Gemini ou vos quotas.";
-            break;
-        case 1011:
-            base = "Erreur Serveur Interne";
-            detail = "(Le serveur vocal a rencontré un problème)";
-            break;
-        default:
-            base = `Fermeture inattendue (${code || 'Inconnu'})`;
-    }
-
-    const audioStatus = ctxState !== 'running' ? `[Audio: ${ctxState}]` : '';
-    const reasonText = reason ? `| Raison: "${reason}"` : '';
-    
-    return `${base} ${detail} ${audioStatus} ${reasonText}`.trim();
-};
-
 const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, notify, onShowPayment }) => {
   const { refetch } = useUserProfile(user.id);
   const { session, updateSession } = useLearningSession(user.id, user.preferences, 'call');
@@ -133,6 +97,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
   const activeSessionRef = useRef<any>(null);
   const isConnectedRef = useRef(false);
   const hasStartedRef = useRef(false);
+  const lastBilledDurationRef = useRef<number>(-1);
 
   const cleanupAudio = useCallback(() => {
       // 1. Stop Media Stream Tracks
@@ -146,7 +111,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
           try {
             processorRef.current.disconnect();
             processorRef.current.port.onmessage = null;
-          } catch (_e) { /* ignore */ }
+          } catch { /* ignore */ }
           processorRef.current = null;
       }
 
@@ -157,7 +122,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
               if (state !== 'closed') {
                   audioContextRef.current.close().catch(() => {});
               }
-          } catch (_e) { /* ignore */ }
+          } catch { /* ignore */ }
           audioContextRef.current = null;
       }
 
@@ -165,7 +130,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
       if (activeSessionRef.current) {
           try { 
              activeSessionRef.current.then((s: any) => s.close()).catch(() => {});
-          } catch (_e) {}
+          } catch {}
           activeSessionRef.current = null;
       }
       
@@ -198,16 +163,9 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
       return () => clearInterval(interval);
   }, [status]);
 
-  // Billing Effect : Triggered at 5s and then every 60s (65s, 125s, etc.)
-  useEffect(() => {
-      if (duration === 5 || (duration > 5 && (duration - 5) % 60 === 0)) {
-          processBilling();
-      }
-  }, [duration]);
-
-  const processBilling = async () => {
+  const processBilling = useCallback(async () => {
       if (!user) return;
-      const success = await chargeVoiceMinute();
+      const success = await chargeVoiceMinute(user.id);
       if (success) {
           const { data: updatedUser } = await refetch();
           if (updatedUser) onUpdateUser(updatedUser);
@@ -216,7 +174,17 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
           notify("Crédits épuisés ! Fin de l'appel.", "error");
           handleHangup();
       }
-  };
+  }, [user, refetch, onUpdateUser, notify, handleHangup]);
+
+  // Billing Effect : Triggered at 5s and then every 60s (65s, 125s, etc.)
+  useEffect(() => {
+      if (duration === 5 || (duration > 5 && (duration - 5) % 60 === 0)) {
+          if (lastBilledDurationRef.current !== duration) {
+              lastBilledDurationRef.current = duration;
+              processBilling();
+          }
+      }
+  }, [duration, processBilling]);
 
   const startSession = async () => {
       if (!user || hasStartedRef.current) return;
@@ -225,21 +193,26 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
       // Ensure clean slate
       cleanupAudio();
 
-      // We now deduct at 5 seconds into the call as per new rules
-      // But we still check if user has enough credits to start
-      if (user.credits < 5) {
-          notify(`Il faut au moins 5 crédits pour démarrer l'appel.`, "error");
-          onShowPayment();
-          onClose();
-          return;
-      }
-
       setStatus('connecting');
-      setSubStatus("Initialisation Audio...");
+      setSubStatus("Vérification des crédits...");
 
       try {
+          // 1. Verify REAL credits from DB
+          const { data: freshUser, error: fetchError } = await refetch();
+          if (fetchError || !freshUser) {
+              throw new Error("Impossible de vérifier vos crédits. Réessayez.");
+          }
+
+          if (freshUser.credits < 5) {
+              notify(`Il faut au moins 5 crédits pour démarrer l'appel.`, "error");
+              onShowPayment();
+              onClose();
+              return;
+          }
+
+          setSubStatus("Initialisation Audio...");
           const AC = window.AudioContext || (window as any).webkitAudioContext;
-          const ctx = new AC({ sampleRate: OUTPUT_SAMPLE_RATE }); // Force sample rate if possible
+          const ctx = new AC({ sampleRate: OUTPUT_SAMPLE_RATE }); 
           
           if (ctx.state === 'suspended') {
             await ctx.resume();
@@ -254,6 +227,8 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
           await connectToProxy(ctx);
 
       } catch (e: any) {
+          if (!isMountedRef.current) return;
+          
           if (e.message !== "Accès microphone refusé ou impossible." && !e.message.includes("Microphone")) {
               console.error("Fatal Error", e);
           }
@@ -267,6 +242,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
   const connectToProxy = async (ctx: AudioContext) => {
       if (!user) return;
       
+      let currentApiKey = "";
       try {
           // --- PROMPT SYSTÈME STRICT : IMMERSION & CORRECTION ---
           const sysPrompt = `
@@ -276,6 +252,9 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
           AUDIO INSTRUCTIONS:
           - **SPEAK SLOWLY AND CLEARLY**. Articulate every word.
           - Use a warm, patient, and encouraging tone.
+
+          TEXT INSTRUCTIONS:
+          - DO NOT output any internal thoughts, reasoning, or actions (like **Acknowledge**, *smiles*, etc.) in your text response. Only output the exact words you are speaking.
           
           LANGUAGE RULES:
           1. **PRIMARY**: Speak 90% in ${user.preferences?.targetLanguage}.
@@ -293,8 +272,9 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
           `;
 
           const apiKey = await getGeminiApiKey();
+          currentApiKey = apiKey;
           if (!apiKey) {
-              throw new Error("Clé API Gemini non configurée dans l'environnement.");
+              throw new Error("Clé API Gemini non configurée.");
           }
 
           const ai = new GoogleGenAI({ apiKey });
@@ -324,7 +304,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
                               s.sendRealtimeInput({
                                   media: {
                                       mimeType: "audio/pcm;rate=16000",
-                                      data: "" // Empty audio to trigger start if needed, or rely on system prompt
+                                      data: "" 
                                   }
                               });
                           }).catch(() => {});
@@ -343,7 +323,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
                               }
                           }
                           
-                          // Handle User Input Transcription (if available in the message structure)
+                          // Handle User Input Transcription
                           const userTextPart = (msg as any).clientContent?.turnComplete?.parts?.find((p: any) => p.text) || 
                                                (msg.serverContent as any)?.clientContent?.parts?.find((p: any) => p.text) ||
                                                (msg as any).inputTranscription?.parts?.find((p: any) => p.text);
@@ -382,6 +362,9 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
                   },
                   onerror: (err) => {
                       console.error("Session error", err);
+                      if (currentApiKey) {
+                          import('../services/geminiService').then(m => m.reportFailedApiKey(currentApiKey));
+                      }
                       cleanupAudio();
                       if (isMountedRef.current) {
                           setStatus('error');
@@ -425,7 +408,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
               console.warn("HQ Mic failed, trying fallback...", e);
               try {
                   stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-              } catch (e2) {
+              } catch {
                   throw new Error("Accès microphone refusé ou impossible.");
               }
           }
@@ -469,15 +452,15 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
           const workletUrl = URL.createObjectURL(blob);
           
           // Check context state before adding module
-          if ((ctx.state as string) === 'closed') {
-              throw new Error("AudioContext is closed");
+          if (!isMountedRef.current || (ctx.state as string) === 'closed') {
+              return;
           }
           
           await ctx.audioWorklet.addModule(workletUrl);
 
           // Check context state again after await
-          if ((ctx.state as string) === 'closed') {
-              throw new Error("AudioContext is closed");
+          if (!isMountedRef.current || (ctx.state as string) === 'closed') {
+              return;
           }
 
           const workletNode = new AudioWorkletNode(ctx, 'audio-capture-processor');
@@ -507,7 +490,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
                           }
                       });
                   }).catch(() => {});
-              } catch (_err) {}
+              } catch { /* ignore */ }
           };
 
           source.connect(workletNode);
@@ -523,6 +506,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
 
   const playAudioChunk = async (base64: string, ctx: AudioContext) => {
       try {
+          if (!isMountedRef.current || (ctx.state as string) === 'closed') return;
           if (ctx.state === 'suspended') await ctx.resume();
 
           const buffer = pcmToAudioBuffer(base64, ctx);
@@ -536,7 +520,9 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
           source.start(startTime);
           nextStartTimeRef.current = startTime + buffer.duration;
       } catch (e) {
-          console.error("Playback Error", e);
+          if (isMountedRef.current && (ctx.state as string) !== 'closed') {
+              console.error("Playback Error", e);
+          }
       }
   };
 
@@ -644,23 +630,6 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
                       </>
                   )}
               </div>
-              
-              {/* Transcription Overlay */}
-              {session?.messages && session.messages.length > 0 && (
-                  <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md px-6 pb-4">
-                      <div className="flex flex-col gap-2 max-h-32 overflow-y-auto no-scrollbar" style={{ maskImage: 'linear-gradient(to bottom, transparent, black 20%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 20%)' }}>
-                          {session.messages.slice(-3).map((msg, idx) => (
-                              <div key={idx} className={`text-sm p-3 rounded-2xl backdrop-blur-md border ${
-                                  msg.role === 'user' 
-                                  ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-100 self-end ml-8 rounded-br-sm' 
-                                  : 'bg-emerald-500/20 border-emerald-500/30 text-emerald-100 self-start mr-8 rounded-bl-sm'
-                              }`}>
-                                  {msg.text}
-                              </div>
-                          ))}
-                      </div>
-                  </div>
-              )}
           </div>
 
           {/* Erreur overlay */}

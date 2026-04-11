@@ -2,19 +2,18 @@
 import React, { useState } from 'react';
 import { UserProfile } from '../types';
 import { useAuth } from '../hooks/queries/useAuth';
-import { GraduationCap, ArrowRight, Sun, Moon, Mail, Lock, User, ArrowLeft, HelpCircle, Phone, X, Send, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { ArrowRight, Sun, Mail, Lock, User, ArrowLeft, Phone, X, Send, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import LegalModal from './LegalModals';
 import { useTranslation } from '../contexts/LanguageContext';
 
 interface AuthScreenProps {
   onAuthSuccess: (user: UserProfile) => void;
   onBack: () => void;
-  isDarkMode: boolean;
   toggleTheme: () => void;
   notify: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMode, toggleTheme, notify }) => {
+const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, toggleTheme, notify }) => {
   const { t, language, setLanguage } = useTranslation();
   const { login, register, resetPassword, isLoggingIn, isRegistering, isResettingPassword } = useAuth();
   const [isRegisteringMode, setIsRegisteringMode] = useState(false);
@@ -37,8 +36,9 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
           await resetPassword(forgotData.email);
           notify(t('auth.reset_email_sent') || "Email de réinitialisation envoyé !", 'success');
           setShowForgotModal(false);
-      } catch (error: any) {
-          notify(error.message || "Erreur lors de l'envoi", 'error');
+      } catch (error) {
+          const err = error as Error;
+          notify(err.message || "Erreur lors de l'envoi", 'error');
       }
   };
 
@@ -62,10 +62,11 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, isDarkMo
         if (user) {
             onAuthSuccess(user);
         }
-    } catch (error: any) {
-        console.error(error);
-        setErrorMessage(error.message || t('auth.error_generic'));
-        notify(error.message || t('auth.error_generic'), 'error');
+    } catch (error) {
+        const err = error as Error;
+        console.error(err);
+        setErrorMessage(err.message || t('auth.error_generic'));
+        notify(err.message || t('auth.error_generic'), 'error');
     }
   };
 

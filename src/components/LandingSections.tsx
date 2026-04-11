@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Mic, Phone, X, MessageCircle, Sparkles, Check, Award, Star, ShieldCheck, Play, Pause, BarChart3, Zap, Brain, ArrowRight, Linkedin, Share2, Target as TargetIcon } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { Mic, Phone, MessageCircle, Sparkles, Check, Award, ShieldCheck, BarChart3, Zap, Brain, ArrowRight, Linkedin, Share2 } from 'lucide-react';
 import { useTranslation } from '../contexts/LanguageContext';
 
 // --- 1. Live Voice Call Section ---

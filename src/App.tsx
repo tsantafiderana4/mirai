@@ -173,15 +173,15 @@ const AppContent: React.FC = () => {
       setCurrentSession(null);
   };
 
-  const handleOnboardingComplete = async (prefs: any) => {
+  const handleOnboardingComplete = async (prefs: UserPreferences) => {
     if (!user || !prefs) return;
     const selectedLang = prefs.targetLanguage || "English"; // Default fallback
     
     // Ensure preferences match UserPreferences type strictly
     const newPreferences: UserPreferences = {
+        ...(user.preferences || {}),
         ...prefs,
         targetLanguage: selectedLang,
-        // Ensure other required fields if any, or spread prefs
     };
 
     const updated: UserProfile = { 
@@ -210,7 +210,13 @@ const AppContent: React.FC = () => {
               toast.error("Impossible de générer des exercices (Contexte insuffisant ou erreur).");
           }
       } catch (e) {
-          toast.error("Erreur lors de la génération.");
+          const error = e as Error;
+          if (error.message === "CREDITS_EXHAUSTED") {
+              toast.error("Crédits insuffisants pour générer des exercices.");
+              setShowPayment(true);
+          } else {
+              toast.error("Erreur lors de la génération.");
+          }
       } finally {
           setIsGeneratingExercise(false);
       }
@@ -396,7 +402,6 @@ const AppContent: React.FC = () => {
         <AuthScreen 
           onAuthSuccess={handleAuthSuccess} 
           onBack={() => setShowAuth(false)} 
-          isDarkMode={isDarkMode} 
           toggleTheme={toggleDarkMode} 
           notify={notify} 
         />

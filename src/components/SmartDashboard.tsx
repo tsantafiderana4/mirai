@@ -55,7 +55,7 @@ const SmartDashboard: React.FC<Props> = ({
   const [editVoiceName, setEditVoiceName] = useState<VoiceName>(user?.preferences?.voiceName || 'Kore');
 
   // Low Credit Check
-  const isLowCredits = user ? user.credits < 2 : false;
+  const isLowCredits = user ? user.credits < 5 : false;
 
   // Combine Certificates and Passed Exams
   const displayCertificates = useMemo(() => {

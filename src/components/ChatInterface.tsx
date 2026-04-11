@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Phone, ArrowLeft, Sun, Moon, Zap, ChevronDown, Repeat, MessageCircle, Brain, Loader2, AlertTriangle, Play, BookOpen, Trophy, Cloud, CloudOff, CloudLightning, Award, Check, Volume2 } from 'lucide-react';
 import { ExplanationLanguage } from '../types';
-import { ChatMessage, LearningSession } from '../types';
+import { ChatMessage } from '../types';
 import { generateText } from '../services/geminiService';
 import { CREDIT_COSTS } from '../services/creditService';
 import { useUserProfile } from '../hooks/queries/useUserProfile';
@@ -29,6 +29,7 @@ interface Props {
 }
 
 // Helper to convert Raw PCM to AudioBuffer
+/*
 function pcmToAudioBuffer(data: Uint8Array, ctx: AudioContext, sampleRate: number = 30000) {
     const pcm16 = new Int16Array(data.buffer);
     const float32 = new Float32Array(pcm16.length);
@@ -39,6 +40,7 @@ function pcmToAudioBuffer(data: Uint8Array, ctx: AudioContext, sampleRate: numbe
     buffer.copyToChannel(float32, 0);
     return buffer;
 }
+*/
 
 
 const ChatInterface: React.FC<Props> = ({ 
@@ -46,7 +48,7 @@ const ChatInterface: React.FC<Props> = ({
   onStartPractice, onStartExercise, onStartVoiceCall, onStartExam,
   notify, onShowPayment, onChangeCourse
 }) => {
-  const { user, setUser, currentSession: session, setCurrentSession } = useAppStore();
+  const { user, setUser, setCurrentSession } = useAppStore();
   const { refetch: refetchUser } = useUserProfile(user?.id || '');
   const { session: learningSession, refetch: refetchSession, updateSession } = useLearningSession(user?.id || '', user?.preferences);
   const { notifications } = useNotifications(user?.id || '');
@@ -58,8 +60,6 @@ const ChatInterface: React.FC<Props> = ({
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const [input, setInput] = useState('');
-  const [nextLessonInput, setNextLessonInput] = useState('');
-  const [showNextInput, setShowNextInput] = useState(false);
   const [showStartButton, setShowStartButton] = useState(false);
   const [showTopMenu, setShowTopMenu] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('tm_theme') === 'dark');
@@ -67,6 +67,7 @@ const ChatInterface: React.FC<Props> = ({
   const [refreshSuccess, setRefreshSuccess] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('synced');
   const [openGuideItem, setOpenGuideItem] = useState<string | null>('start_lesson');
+  const [showVoiceCallConfirm, setShowVoiceCallConfirm] = useState(false);
   
   const LOADING_PHRASES = useMemo(() => [
     t('chat.teacher_thinking'),
@@ -127,6 +128,11 @@ const ChatInterface: React.FC<Props> = ({
   }, [messages.length]);
 
   const handleVoiceCallClick = async () => {
+      setShowVoiceCallConfirm(true);
+  };
+
+  const confirmVoiceCall = async () => {
+      setShowVoiceCallConfirm(false);
       if (!user) return;
       const allowed = user.credits >= CREDIT_COSTS.VOICE_CALL; 
       if (!allowed) {
@@ -186,10 +192,15 @@ const ChatInterface: React.FC<Props> = ({
 
   const progressData = useMemo(() => {
       if (!user) return { percentage: 0, nextLevel: 'A1', currentLevel: 'A1', completed: 0, total: 50 };
-      const levels = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'HSK 1', 'HSK 2', 'HSK 3', 'HSK 4', 'HSK 5', 'HSK 6'];
-      const currentLevel = user.preferences?.level || 'A1';
+      
+      const isChinese = user.preferences?.targetLanguage?.includes('Chinois');
+      const levels = isChinese 
+          ? ['HSK 1', 'HSK 2', 'HSK 3', 'HSK 4', 'HSK 5', 'HSK 6']
+          : ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+          
+      const currentLevel = user.preferences?.level || (isChinese ? 'HSK 1' : 'A1');
       const currentIndex = levels.indexOf(currentLevel);
-      const nextLevel = currentIndex < levels.length - 1 ? levels[currentIndex + 1] : 'Expert';
+      const nextLevel = currentIndex !== -1 && currentIndex < levels.length - 1 ? levels[currentIndex + 1] : 'Expert';
       
       const lessonsPerLevel = 50;
       // Sync with current lesson number from chat if higher than stats
@@ -205,7 +216,7 @@ const ChatInterface: React.FC<Props> = ({
       return getFlagUrl(lang.split(' ')[0]);
   }, [user]);
 
-  const isLowCredits = user ? user.credits <= 0 : false;
+  const isLowCredits = user ? user.credits < 5 : false;
 
   const handleStartCourse = () => {
       if (!user) return;
@@ -464,27 +475,45 @@ const ChatInterface: React.FC<Props> = ({
                         if (translated) {
                             setInput(translated.trim());
                         }
-                    } catch (_e) {
+                    } catch {
                         notify(t('chat.translation_error'), "error");
                     }
                 }}
                 isStreaming={isStreaming}
                 isLowCredits={isLowCredits}
-                onNextLesson={() => {
-                    const allowed = user ? user.credits >= CREDIT_COSTS.LESSON : false;
-                    if(!allowed) { notify(t('chat.insufficient_credits'), "error"); onShowPayment(); return; }
-                    setNextLessonInput((currentLessonNum + 1).toString());
-                    setShowNextInput(true);
-                }}
                 onConfirmNextLesson={(lesson) => {
                     if (lesson.trim()) {
                         processMessage(`Commence la Leçon ${lesson}`); 
-                        setShowNextInput(false);
                     }
                 }}
+                onStartVoiceCall={handleVoiceCallClick}
+                suggestedNextLesson={currentLessonNum + 1}
             />
         </div>
       </footer>
+
+      {/* Voice Call Confirmation Modal */}
+      {showVoiceCallConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+              <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-fade-in-up border border-slate-200 dark:border-slate-700">
+                  <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2 flex items-center gap-2">
+                      <Phone className="w-5 h-5 text-purple-500" />
+                      {t('dashboard.start_voice') || 'Appel Vocal'}
+                  </h3>
+                  <p className="text-sm text-slate-600 dark:text-slate-300 mb-6">
+                      Voulez-vous vraiment lancer un appel vocal ? Cela consommera {CREDIT_COSTS.VOICE_CALL} crédits.
+                  </p>
+                  <div className="flex justify-end gap-3">
+                      <button onClick={() => setShowVoiceCallConfirm(false)} className="px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
+                          {t('common.cancel') || 'Annuler'}
+                      </button>
+                      <button onClick={confirmVoiceCall} className="px-4 py-2 text-sm font-bold text-white bg-purple-500 hover:bg-purple-600 rounded-full transition-colors shadow-md">
+                          {t('common.confirm') || 'Confirmer'}
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 };

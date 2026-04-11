@@ -6,68 +6,91 @@ import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { CREDIT_COSTS, deductCredits } from "./creditService";
 
 // Cache the API keys to avoid querying DB on every request
-let cachedApiKeys: string[] = [];
-let currentKeyIndex = 0;
+let cachedApiKeys: { value: string, failures: number, lastUsed: number }[] = [];
 let lastKeyFetch: number = 0;
 
 export async function getGeminiApiKey(): Promise<string> {
-    // Return cached key if fetched recently (within 5 minutes)
-    if (cachedApiKeys.length > 0 && Date.now() - lastKeyFetch < 5 * 60 * 1000) {
-        const key = cachedApiKeys[currentKeyIndex];
-        currentKeyIndex = (currentKeyIndex + 1) % cachedApiKeys.length;
-        return key;
-    }
+    // Refresh cache if empty or older than 5 minutes
+    if (cachedApiKeys.length === 0 || Date.now() - lastKeyFetch > 5 * 60 * 1000) {
+        try {
+            // 1. Try to fetch from dedicated api_keys table
+            const { data: tableKeys, error: tableError } = await supabase
+                .from('api_keys')
+                .select('key_value')
+                .eq('is_active', true)
+                .eq('provider', 'gemini');
 
-    try {
-        // 1. Try to fetch from dedicated api_keys table (New System)
-        const { data: tableKeys, error: tableError } = await supabase
-            .from('api_keys')
-            .select('key_value')
-            .eq('is_active', true)
-            .eq('provider', 'gemini');
-
-        if (!tableError && tableKeys && tableKeys.length > 0) {
-            cachedApiKeys = tableKeys.map(k => k.key_value);
-            lastKeyFetch = Date.now();
-            currentKeyIndex = 0;
-            
-            const key = cachedApiKeys[currentKeyIndex];
-            currentKeyIndex = (currentKeyIndex + 1) % cachedApiKeys.length;
-            return key;
-        }
-
-        // 2. Fallback to system_settings (Old System)
-        const { data, error } = await supabase.from('system_settings').select('admin_contact').single();
-        if (!error && data?.admin_contact?.apiKeys) {
-            const keys = data.admin_contact.apiKeys;
-            let fetchedKeys: string[] = [];
-            
-            if (keys.geminiKeys && Array.isArray(keys.geminiKeys) && keys.geminiKeys.length > 0) {
-                fetchedKeys = keys.geminiKeys;
-            } else if (keys.gemini) {
-                fetchedKeys = [keys.gemini];
-            }
-            
-            if (fetchedKeys.length > 0) {
-                cachedApiKeys = fetchedKeys;
+            if (!tableError && tableKeys && tableKeys.length > 0) {
+                cachedApiKeys = tableKeys.map(k => ({ 
+                    value: k.key_value, 
+                    failures: 0, 
+                    lastUsed: 0 
+                }));
                 lastKeyFetch = Date.now();
-                currentKeyIndex = 0;
-                
-                const key = cachedApiKeys[currentKeyIndex];
-                currentKeyIndex = (currentKeyIndex + 1) % cachedApiKeys.length;
-                return key;
+            } else {
+                // 2. Fallback to system_settings
+                const { data, error } = await supabase.from('system_settings').select('admin_contact').single();
+                if (!error && data?.admin_contact?.apiKeys) {
+                    const keys = data.admin_contact.apiKeys;
+                    let fetchedKeys: string[] = [];
+                    
+                    if (keys.geminiKeys && Array.isArray(keys.geminiKeys) && keys.geminiKeys.length > 0) {
+                        fetchedKeys = keys.geminiKeys;
+                    } else if (keys.gemini) {
+                        fetchedKeys = [keys.gemini];
+                    }
+                    
+                    if (fetchedKeys.length > 0) {
+                        cachedApiKeys = fetchedKeys.map(k => ({ 
+                            value: k, 
+                            failures: 0, 
+                            lastUsed: 0 
+                        }));
+                        lastKeyFetch = Date.now();
+                    }
+                }
             }
+        } catch (e) {
+            console.warn("Could not fetch API key from DB", e);
         }
-    } catch (e) {
-        console.warn("Could not fetch API key from DB, falling back to env", e);
     }
 
-    // 3. Fallback to env
-    const envKey = process.env.GEMINI_API_KEY;
-    if (!envKey) {
-        throw new Error("Clé API Gemini non configurée (ni en DB ni en variable d'environnement).");
+    // Fallback to env if still empty
+    if (cachedApiKeys.length === 0) {
+        const envKey = process.env.GEMINI_API_KEY;
+        if (!envKey) {
+            throw new Error("Clé API Gemini non configurée.");
+        }
+        return envKey;
     }
-    return envKey;
+
+    // Intelligent Rotation: Pick the key with the fewest failures, then the least recently used
+    // Filter out keys with too many failures (e.g., > 5)
+    const availableKeys = cachedApiKeys.filter(k => k.failures < 5);
+    const pool = availableKeys.length > 0 ? availableKeys : cachedApiKeys;
+
+    pool.sort((a, b) => {
+        if (a.failures !== b.failures) return a.failures - b.failures;
+        return a.lastUsed - b.lastUsed;
+    });
+
+    const selected = pool[0];
+    selected.lastUsed = Date.now();
+    return selected.value;
+}
+
+/**
+ * Report a failed API key so it can be deprioritized in rotation
+ */
+export function reportFailedApiKey(keyValue: string) {
+    const key = cachedApiKeys.find(k => k.value === keyValue);
+    if (key) {
+        key.failures++;
+        // If many failures, maybe force a refresh sooner
+        if (key.failures >= 5) {
+            lastKeyFetch = 0; 
+        }
+    }
 }
 
 const SUPPORT_QUOTA_KEY = 'tm_support_quota';
@@ -92,9 +115,12 @@ const incrementSupportUsage = () => {
 // --- SERVICES EXPORTÉS ---
 
 // Nouvelle fonction pour facturer le LiveTeacher
-export const chargeVoiceMinute = async (): Promise<boolean> => {
+export const chargeVoiceMinute = async (userId: string): Promise<boolean> => {
     try {
-        const { data: newCredits, error: rpcError } = await supabase.rpc('consume_credits', { p_amount: CREDIT_COSTS.VOICE_CALL_PER_MINUTE });
+        const { data: newCredits, error: rpcError } = await supabase.rpc('consume_credits', { 
+            p_amount: CREDIT_COSTS.VOICE_CALL_PER_MINUTE,
+            p_user_id: userId
+        });
         if (rpcError) {
             console.error('[Billing Error]', rpcError);
             return false;
@@ -102,12 +128,12 @@ export const chargeVoiceMinute = async (): Promise<boolean> => {
         if (newCredits !== null) {
             if (typeof newCredits === 'number') {
                 useAppStore.getState().updateUserCredits(newCredits);
-            } else if (typeof (newCredits as any).current_balance === 'number') {
-                useAppStore.getState().updateUserCredits((newCredits as any).current_balance);
+            } else if (newCredits && typeof newCredits === 'object' && 'current_balance' in newCredits) {
+                useAppStore.getState().updateUserCredits((newCredits as { current_balance: number }).current_balance);
             }
         }
         return true;
-    } catch (e: any) {
+    } catch (e: unknown) {
         console.error("Erreur de facturation vocale:", e);
         return false;
     }
@@ -131,12 +157,13 @@ export const generateSupportResponse = async (
         return "⛔ Quota journalier d'aide atteint (100/100). Revenez demain.";
     }
 
+    let apiKey = '';
     try {
         const systemInstruction = SUPPORT_AGENT_PROMPT(context, user);
         
         const prompt = `Historique de conversation:\n${history.map(h => `${h.role}: ${h.text}`).join('\n')}\n\nQuestion actuelle: ${userQuery}`;
 
-        const apiKey = await getGeminiApiKey();
+        apiKey = await getGeminiApiKey();
         const ai = new GoogleGenAI({ apiKey });
 
         const response = await ai.models.generateContent({
@@ -152,6 +179,7 @@ export const generateSupportResponse = async (
         incrementSupportUsage();
         return response.text || "Je n'ai pas de réponse pour le moment.";
     } catch (e) {
+        if (apiKey) reportFailedApiKey(apiKey);
         console.error("Support error:", e);
         return "Désolé, je rencontre un problème technique momentané. Veuillez réessayer.";
     }
@@ -166,21 +194,22 @@ export async function* sendMessageStream(
 ) {
   if (!user.preferences) throw new Error("Profil incomplet");
 
+  console.log("[Gemini] Stream started via SDK. Model:", TEXT_MODEL);
+
+  // OPTIMIZATION: Limit history to last 15 messages to reduce latency and token usage
+  const recentHistory = history.slice(-15);
+
+  // Format history
+  const contextPrompt = recentHistory
+    .filter(msg => msg.text && msg.text.trim().length > 0)
+    .map(msg => `${msg.role === 'user' ? 'Élève' : 'Professeur'}: ${msg.text}`)
+    .join('\n\n');
+
+  const finalMessage = contextPrompt ? `Contexte précédent:\n${contextPrompt}\n\nNouveau message de l'élève: ${message}` : message;
+  
+  let apiKey = '';
   try {
-      console.log("[Gemini] Stream started via SDK. Model:", TEXT_MODEL);
-
-      // OPTIMIZATION: Limit history to last 15 messages to reduce latency and token usage
-      const recentHistory = history.slice(-15);
-
-      // Format history
-      const contextPrompt = recentHistory
-        .filter(msg => msg.text && msg.text.trim().length > 0)
-        .map(msg => `${msg.role === 'user' ? 'Élève' : 'Professeur'}: ${msg.text}`)
-        .join('\n\n');
-
-      const finalMessage = contextPrompt ? `Contexte précédent:\n${contextPrompt}\n\nNouveau message de l'élève: ${message}` : message;
-      
-      const apiKey = await getGeminiApiKey();
+      apiKey = await getGeminiApiKey();
       const ai = new GoogleGenAI({ apiKey });
 
       const responseStream = await ai.models.generateContentStream({
@@ -208,6 +237,7 @@ export async function* sendMessageStream(
       }
 
   } catch (e: any) {
+      if (apiKey) reportFailedApiKey(apiKey);
       console.error("[Gemini] Stream exception:", e);
       console.error("[Gemini] Error details:", JSON.stringify(e, Object.getOwnPropertyNames(e)));
       if (e.message === "CREDITS_EXHAUSTED") {
@@ -231,11 +261,12 @@ export const generateSpeech = async (text: string, voiceName: string = 'Kore'): 
         }
     };
 
+    let apiKey = '';
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
             console.log(`[Gemini TTS] Generating speech (attempt ${attempt + 1})...`);
             
-            const apiKey = await getApiKey();
+            apiKey = await getApiKey();
             if (!apiKey) {
                 throw new Error("Aucune clé API Gemini disponible.");
             }
@@ -286,6 +317,7 @@ export const generateSpeech = async (text: string, voiceName: string = 'Kore'): 
             return bytes.buffer as ArrayBuffer;
 
         } catch (e) {
+            if (apiKey) reportFailedApiKey(apiKey);
             console.warn(`[Gemini TTS] Failed (attempt ${attempt + 1}):`, e);
             if (attempt === MAX_RETRIES) return null;
             // Wait before retrying (exponential backoff)
@@ -344,9 +376,30 @@ export const extractVocabulary = async (history: ChatMessage[]): Promise<any[]> 
 
 // 5. EXERCICES
 export const generateExerciseFromHistory = async (history: ChatMessage[], user: UserProfile): Promise<ExerciseItem[]> => {
-    const prompt = `Génère 3 exercices (QCM/Vrai-Faux) pour niveau ${user.preferences?.level} (${user.preferences?.targetLanguage}). Format JSON Array.`;
+    const recentContext = history.slice(-15).map(m => `${m.role === 'user' ? 'Élève' : 'Professeur'}: ${m.text}`).join('\n');
+    
+    const prompt = `En tant que professeur de langue expert, génère 5 exercices interactifs basés sur la conversation récente ci-dessous pour un élève de niveau ${user.preferences?.level} apprenant le ${user.preferences?.targetLanguage}.
+    
+    CONTEXTE DE LA CONVERSATION:
+    ${recentContext}
+    
+    INSTRUCTIONS:
+    1. Les exercices doivent renforcer le vocabulaire et la grammaire vus dans la conversation.
+    2. Varie les types d'exercices : multiple_choice (QCM), fill_blank (phrases à trous), true_false (vrai/faux).
+    3. Pour 'fill_blank', la question doit contenir un "___" à l'endroit du mot manquant.
+    4. Fournis une explication pédagogique détaillée pour chaque réponse.
+    5. Adapte strictement la difficulté au niveau ${user.preferences?.level}.
+    
+    Format JSON Array.`;
 
     try {
+        // Deduct credits first (1 credit for exercise generation)
+        const newCredits = await deductCredits(CREDIT_COSTS.EXERCISE, user.id);
+        if (newCredits === null) {
+            throw new Error("CREDITS_EXHAUSTED");
+        }
+        useAppStore.getState().updateUserCredits(newCredits);
+
         const apiKey = await getGeminiApiKey();
         const ai = new GoogleGenAI({ apiKey });
 
@@ -361,7 +414,7 @@ export const generateExerciseFromHistory = async (history: ChatMessage[], user: 
                         type: Type.OBJECT,
                         properties: {
                             id: { type: Type.STRING },
-                            type: { type: Type.STRING },
+                            type: { type: Type.STRING, enum: ["multiple_choice", "fill_blank", "true_false"] },
                             question: { type: Type.STRING },
                             options: { type: Type.ARRAY, items: { type: Type.STRING } },
                             correctAnswer: { type: Type.STRING },
@@ -373,8 +426,16 @@ export const generateExerciseFromHistory = async (history: ChatMessage[], user: 
             }
         });
         
-        return JSON.parse(response.text || "[]");
-    } catch (e) {
+        const exercises = JSON.parse(response.text || "[]");
+        return exercises.map((ex: any) => ({
+            ...ex,
+            id: ex.id || crypto.randomUUID()
+        }));
+    } catch (e: any) {
+        console.error("generateExerciseFromHistory error:", e);
+        if (e.message === "CREDITS_EXHAUSTED") {
+            throw new Error("CREDITS_EXHAUSTED");
+        }
         return [];
     }
 };
