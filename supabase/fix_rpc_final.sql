@@ -38,3 +38,7 @@ BEGIN
   END IF;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Grant execute to authenticated users
+GRANT EXECUTE ON FUNCTION public.consume_credits(INT, UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.consume_credits(INT, UUID) TO service_role;

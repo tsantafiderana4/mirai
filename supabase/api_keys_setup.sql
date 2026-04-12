@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
 -- Index for faster lookups
 CREATE INDEX IF NOT EXISTS idx_api_keys_provider_active ON public.api_keys(provider, is_active);
 
+-- Drop function first to avoid "cannot remove parameter defaults" error
+DROP FUNCTION IF EXISTS public.get_active_api_keys(text);
+
 -- RPC to get active keys (used by Edge Function)
 CREATE OR REPLACE FUNCTION public.get_active_api_keys(p_provider TEXT)
 RETURNS TABLE(key_value TEXT) AS $$

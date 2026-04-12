@@ -17,14 +17,20 @@ const callGeminiFunction = async (action: string, payload: Record<string, unknow
         
         let errorMessage = "Erreur de communication avec l'IA";
         
-        // Try to extract a more descriptive error message if available
-        if (error.message && error.message.includes("non-2xx status code")) {
-            // If it's a 500, it might be a specific error from our Edge Function
-            // supabase.functions.invoke error object doesn't easily expose the body,
-            // but we can check if it's a known error type.
-            errorMessage = `L'IA est temporairement indisponible (Code: ${error.status || '500'}). Veuillez vérifier votre clé API Gemini.`;
-        } else if (error.message) {
+        if (error instanceof Error) {
             errorMessage = error.message;
+        }
+        
+        // Handle Supabase FunctionsHttpError
+        if (error.name === 'FunctionsHttpError') {
+            const status = (error as any).status;
+            if (status === 401) {
+                errorMessage = "Session expirée ou non autorisée. Veuillez vous reconnecter.";
+            } else if (status === 402) {
+                errorMessage = "Crédits insuffisants pour cette action.";
+            } else {
+                errorMessage = `Erreur serveur IA (Code: ${status}).`;
+            }
         }
         
         throw new Error(errorMessage);

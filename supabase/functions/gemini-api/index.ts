@@ -19,6 +19,17 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.error('Missing Supabase environment variables')
+      return new Response(JSON.stringify({ error: 'Configuration serveur incomplète (Env vars manquantes).' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'Non autorisé. Token manquant.' }), { 
@@ -32,23 +43,36 @@ Deno.serve(async (req) => {
     
     if (action === 'health') {
         const apiKey = Deno.env.get('GEMINI_API_KEY');
-        return new Response(JSON.stringify({ status: 'ok', hasKey: !!apiKey }), {
+        const hasUrl = !!Deno.env.get('SUPABASE_URL');
+        const hasAnonKey = !!Deno.env.get('SUPABASE_ANON_KEY');
+        return new Response(JSON.stringify({ 
+            status: 'ok', 
+            hasKey: !!apiKey,
+            hasUrl,
+            hasAnonKey
+        }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
     }
 
     const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      supabaseUrl,
+      supabaseAnonKey,
       { global: { headers: { Authorization: authHeader } } }
     )
 
     const cost = COSTS[action] || 0
     let newBalance: number | null = null;
     if (cost > 0) {
-      const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
       if (authError || !user) {
-        return new Response(JSON.stringify({ error: 'Utilisateur non authentifié.' }), {
+        console.error('[Auth Error]', authError?.message || 'No user found');
+        return new Response(JSON.stringify({ 
+          error: 'Utilisateur non authentifié.', 
+          details: authError?.message,
+          hint: 'Vérifiez que vous êtes bien connecté et que le token n\'est pas expiré.'
+        }), {
           status: 401,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
