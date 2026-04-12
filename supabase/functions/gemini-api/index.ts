@@ -54,9 +54,9 @@ Deno.serve(async (req) => {
         })
       }
 
-      const { data, error: rpcError } = await supabaseClient.rpc('consume_credits', { p_user_id: user.id, p_amount: cost })
+      const { data: newBalanceResult, error: rpcError } = await supabaseClient.rpc('consume_credits', { p_user_id: user.id, p_amount: cost })
       
-      if (rpcError || data === false) {
+      if (rpcError || newBalanceResult === null) {
         console.error('[Billing Error]', rpcError || 'Insufficient credits')
         return new Response(JSON.stringify({ error: 'Crédits insuffisants ou accès refusé.' }), {
           status: 402,
@@ -64,9 +64,7 @@ Deno.serve(async (req) => {
         })
       }
       
-      // Fetch new balance
-      const { data: profile } = await supabaseClient.from('profiles').select('credits').eq('id', user.id).single();
-      newBalance = profile?.credits || 0;
+      newBalance = newBalanceResult;
     }
 
     if (action === 'charge_voice_minute') {
@@ -81,7 +79,7 @@ Deno.serve(async (req) => {
     // Tentative de récupération depuis la base de données (Table api_keys)
     const { data: dbKeys, error: keysError } = await supabaseClient.rpc('get_active_api_keys', { p_provider: 'gemini' })
     if (!keysError && dbKeys && dbKeys.length > 0) {
-        keys = dbKeys.map((k: any) => k.key_value)
+        keys = (dbKeys as { key_value: string }[]).map(k => k.key_value)
     }
 
     // Fallback sur les variables d'environnement si la BDD est vide
@@ -103,11 +101,11 @@ Deno.serve(async (req) => {
     const selectedKey = keys[Math.floor(Math.random() * keys.length)]
     const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    const targetModel = model || 'gemini-2.0-flash'
+    const targetModel = model || 'gemini-3-flash-preview'
     const { systemInstruction, ...genConfig } = config || {}
 
     if (action === 'generate') {
-      const payload: any = {
+      const payload: Record<string, unknown> = {
           contents: typeof contents === 'string' ? [{ parts: [{ text: contents }] }] : contents,
           generationConfig: genConfig
       }
@@ -127,7 +125,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'generate_stream') {
-        const payload: any = {
+        const payload: Record<string, unknown> = {
             contents: typeof contents === 'string' ? [{ parts: [{ text: contents }] }] : contents,
             generationConfig: genConfig
         }
@@ -186,7 +184,7 @@ Deno.serve(async (req) => {
             schema = { type: 'OBJECT', properties: { aiReply: { type: 'STRING' }, correction: { type: 'STRING' }, explanation: { type: 'STRING' }, score: { type: 'NUMBER' }, feedback: { type: 'STRING' } }, required: ["aiReply"] }
         }
 
-        const payload: any = {
+        const payload: Record<string, unknown> = {
             contents: typeof contents === 'string' ? [{ parts: [{ text: contents }] }] : contents,
             generationConfig: { ...genConfig, responseMimeType: 'application/json', responseSchema: schema }
         }
@@ -206,12 +204,12 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'generate_speech') {
-        const payload: any = {
+        const payload: Record<string, unknown> = {
             contents: [{ parts: [{ text: text }] }],
             generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' } } } }
         }
 
-        const res = await fetch(`${BASE_URL}/${model || 'gemini-2.0-flash-exp'}:generateContent?key=${selectedKey}`, {
+        const res = await fetch(`${BASE_URL}/${model || 'gemini-2.5-flash-preview-tts'}:generateContent?key=${selectedKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -226,9 +224,10 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({ error: `Action inconnue: ${action}` }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Edge Function Error]', error)
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })

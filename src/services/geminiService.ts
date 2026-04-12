@@ -1,6 +1,6 @@
 import { UserProfile, ChatMessage, ExerciseItem } from "../types";
 import { SYSTEM_PROMPT_TEMPLATE, SUPPORT_AGENT_PROMPT } from "../constants";
-import { supabase, supabaseUrl, supabaseAnonKey } from "../lib/supabase";
+import { supabase } from "../lib/supabase";
 import { useAppStore } from '../store/useAppStore';
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { CREDIT_COSTS, deductCredits } from "./creditService";
@@ -129,6 +129,7 @@ export const chargeVoiceMinute = async (userId: string): Promise<boolean> => {
             if (typeof newCredits === 'number') {
                 useAppStore.getState().updateUserCredits(newCredits);
             } else if (newCredits && typeof newCredits === 'object' && 'current_balance' in newCredits) {
+                // Handle case where RPC might return an object (legacy support)
                 useAppStore.getState().updateUserCredits((newCredits as { current_balance: number }).current_balance);
             }
         }

@@ -158,7 +158,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
       } catch (_e) {
           const err = _e as any;
           console.error(err);
-          const msg = err.message?.includes('unique constraint') ? "Ce code existe déjà." : "Erreur serveur : Coupon non sauvegardé.";
+          let msg = "Erreur serveur : Coupon non sauvegardé.";
+          if (err.message?.includes('unique constraint')) msg = "Ce code existe déjà.";
+          if (err.code === '42501') msg = "Erreur de permission (RLS). Assurez-vous d'être bien Admin dans la base de données.";
           notify(msg, 'error');
       }
   };

@@ -164,10 +164,12 @@ export const useAdmin = () => {
 
     const addCoupon = useMutation({
         mutationFn: async (coupon: { code: string, amount: number, expiresAt?: number }) => {
+            const { data: { user } } = await supabase.auth.getUser();
             const { error } = await supabase.from('coupons').insert({
                 code: coupon.code,
                 amount: coupon.amount,
-                expires_at: coupon.expiresAt ? new Date(coupon.expiresAt).toISOString() : null
+                expires_at: coupon.expiresAt ? new Date(coupon.expiresAt).toISOString() : null,
+                created_by: user?.id
             });
             if (error) throw error;
         },

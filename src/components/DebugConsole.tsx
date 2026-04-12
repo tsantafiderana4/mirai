@@ -162,7 +162,7 @@ const DebugConsole: React.FC = () => {
                       },
                       body: JSON.stringify({ 
                           action: 'generate',
-                          model: 'gemini-2.5-flash',
+                          model: 'gemini-3-flash-preview',
                           contents: { parts: [{ text: 'Hello' }] }
                       })
                   });
@@ -229,7 +229,7 @@ const DebugConsole: React.FC = () => {
                   if (error) throw error;
                   console.log("Health Check:", data);
                   if (data.status === 'ok') {
-                      toast.success(`Edge Function OK (Key len: ${data.keyLength})`);
+                      toast.success(`Edge Function OK (Has Key: ${data.hasKey})`);
                   } else {
                       toast.error(`Edge Function Health Failed: ${JSON.stringify(data)}`);
                   }

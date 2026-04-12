@@ -12,6 +12,7 @@ import AdminDashboard from './components/AdminDashboard';
 import TutorialAgent from './components/TutorialAgent';
 import LiveTeacher from './components/LiveTeacher'; 
 import VerifyCertificate from './components/VerifyCertificate'; // Added
+import CulturalImmersion from './components/CulturalImmersion';
 import { UserProfile, LearningSession, ExerciseItem, LearningMode } from './types';
 import type { UserPreferences } from './types';
 import { supabase } from './lib/supabase';
@@ -69,6 +70,7 @@ const AppContent: React.FC = () => {
   const [currentExercises, setCurrentExercises] = useState<ExerciseItem[]>([]);
   const [isGeneratingExercise, setIsGeneratingExercise] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
+  const [showCulturalIntro, setShowCulturalIntro] = useState(false);
 
   // 1. INITIALIZATION & AUTH LISTENER
   useEffect(() => {
@@ -189,6 +191,30 @@ const AppContent: React.FC = () => {
         preferences: newPreferences
     };
     await updateProfile(updated);
+    setShowCulturalIntro(true);
+  };
+
+  const handleIntroComplete = async () => {
+    if (!user || !user.preferences) {
+        setShowCulturalIntro(false);
+        return;
+    }
+
+    const key = `${user.preferences.targetLanguage}-${user.preferences.level}`;
+    const currentSeen = user.preferences.hasSeenCulturalIntro || [];
+    
+    if (!currentSeen.includes(key)) {
+        const updated: UserProfile = {
+            ...user,
+            preferences: {
+                ...user.preferences,
+                hasSeenCulturalIntro: [...currentSeen, key]
+            }
+        };
+        await updateProfile(updated);
+    }
+    
+    setShowCulturalIntro(false);
   };
 
   const handleLogout = async () => {
@@ -256,6 +282,20 @@ const AppContent: React.FC = () => {
   };
 
   const needsOnboarding = !user?.preferences || !user?.preferences?.targetLanguage;
+
+  // Trigger Cultural Intro if not seen for current lang/level
+  useEffect(() => {
+    if (user && user.preferences && !needsOnboarding && !showCulturalIntro) {
+        const key = `${user.preferences.targetLanguage}-${user.preferences.level}`;
+        const hasSeen = user.preferences.hasSeenCulturalIntro?.includes(key);
+        
+        // Only show if they haven't seen it AND they are not in an active session
+        // (to avoid interrupting a lesson)
+        if (!hasSeen && !currentSession) {
+            setShowCulturalIntro(true);
+        }
+    }
+  }, [user, needsOnboarding, currentSession, showCulturalIntro]);
 
   const getAgentContext = () => {
       if (!user) return "Page d'Accueil (Visiteur non connecté) - Présentation de TeacherMada";
@@ -486,6 +526,13 @@ const AppContent: React.FC = () => {
               <PaymentModal 
                   user={user}
                   onClose={() => setShowPayment(false)}
+              />
+          )}
+
+          {showCulturalIntro && (
+              <CulturalImmersion 
+                  user={user}
+                  onComplete={handleIntroComplete}
               />
           )}
         </>

@@ -8,14 +8,21 @@ import { supabase } from "../../lib/supabase"; // Import supabase to call edge f
 import { useAppStore } from "../../store/useAppStore";
 
 // Helper to call edge function directly for specific schemas not covered by geminiService generic methods
-const callGeminiFunction = async (action: string, payload: any) => {
+const callGeminiFunction = async (action: string, payload: Record<string, unknown>) => {
     const { data, error } = await supabase.functions.invoke('gemini-api', {
         body: { action, ...payload }
     });
 
     if (error) {
         console.error(`[Gemini Function] Error calling ${action}:`, error);
-        throw new Error(error.message || "Erreur de communication avec l'IA");
+        // Try to extract a more descriptive error message if available
+        let errorMessage = "Erreur de communication avec l'IA";
+        if (error.message && error.message.includes("non-2xx status code")) {
+            errorMessage = `L'IA est temporairement indisponible (Code: ${error.status || '500'}). Veuillez réessayer.`;
+        } else if (error.message) {
+            errorMessage = error.message;
+        }
+        throw new Error(errorMessage);
     }
 
     if (data.newBalance !== undefined && data.newBalance !== null) {

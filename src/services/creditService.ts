@@ -15,13 +15,18 @@ export const CREDIT_COSTS = {
 };
 
 export async function deductCredits(amount: number, userId: string): Promise<number | null> {
-    const { error } = await supabase.rpc('consume_credits', { p_user_id: userId, p_amount: amount });
+    const { data, error } = await supabase.rpc('consume_credits', { p_user_id: userId, p_amount: amount });
     if (error) {
         console.error("RPC consume_credits failed:", error);
         return null;
     }
     
-    // Fetch new balance
+    // data is the new balance returned by the RPC
+    if (typeof data === 'number') {
+        return data;
+    }
+    
+    // Fallback if data is not a number (should not happen with new RPC)
     const { data: profile } = await supabase.from('profiles').select('credits').eq('id', userId).single();
     return profile?.credits || 0;
 }

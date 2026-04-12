@@ -40,6 +40,7 @@ export interface UserPreferences {
   voiceName: VoiceName;
   teacherName?: string;
   needsAssessment?: boolean;
+  hasSeenCulturalIntro?: string[]; // Array of "lang-level" strings
 }
 
 export interface UserWeakness {
@@ -175,5 +176,30 @@ export interface Certificate {
       writing: number;
       listening: number;
       speaking: number;
+  };
+}
+
+export interface CulturalIntro {
+  language: string;
+  level: string;
+  essentialInfo: {
+    countries: string[];
+    usageContext: string;
+    culturalImportance: string;
+  };
+  communicationBasics: {
+    greetings: string[];
+    politeness: string[];
+    toneAndBehavior: string;
+  };
+  customsAndBehaviors: {
+    dos: string[];
+    donts: string[];
+    gestures: string[];
+  };
+  practicalTips: {
+    learningTips: string[];
+    frequentDifficulties: string[];
+    progressHacks: string[];
   };
 }
