@@ -3,38 +3,55 @@ import { UserProfile } from "../../types";
 import { SmartExam, ExamResultDetailed, ExamType } from "./types";
 import { TEXT_MODEL, generateText } from "../../services/geminiService"; // Use generateText or expose callGeminiFunction if needed, but better to use existing services or refactor
 import { CREDIT_COSTS, deductCredits } from "../../services/creditService";
-import { supabase } from "../../lib/supabase"; // Import supabase to call edge function directly if needed, or better, add a helper in geminiService
+import { supabase, supabaseUrl, supabaseAnonKey } from "../../lib/supabase"; // Import supabase to call edge function directly if needed, or better, add a helper in geminiService
 import { useAppStore } from "../../store/useAppStore";
 
 // Helper to call edge function directly for specific schemas not covered by geminiService generic methods
 const callGeminiFunction = async (action: string, payload: Record<string, unknown>) => {
-    const { data, error } = await supabase.functions.invoke('gemini-api', {
-        body: { action, ...payload }
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
+    if (!token) {
+        throw new Error("Session expirée ou non autorisée. Veuillez vous reconnecter.");
+    }
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/gemini-api`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'apikey': supabaseAnonKey
+        },
+        body: JSON.stringify({ action, ...payload })
     });
 
-    if (error) {
-        console.error(`[Gemini Function] Error calling ${action}:`, error);
+    if (!response.ok) {
+        let errorData;
+        try {
+            errorData = await response.json();
+        } catch (e) {
+            const text = await response.text();
+            throw new Error(`Erreur serveur IA (Code: ${response.status}). ${text}`);
+        }
+
+        console.error(`[Gemini Function] Error calling ${action}:`, errorData);
         
-        let errorMessage = "Erreur de communication avec l'IA";
+        let errorMessage = errorData.error || errorData.message || "Erreur de communication avec l'IA";
         
-        if (error instanceof Error) {
-            errorMessage = error.message;
+        if (errorData.details) {
+            errorMessage += ` (${errorData.details})`;
         }
         
-        // Handle Supabase FunctionsHttpError
-        if (error.name === 'FunctionsHttpError') {
-            const status = (error as any).status;
-            if (status === 401) {
-                errorMessage = "Session expirée ou non autorisée. Veuillez vous reconnecter.";
-            } else if (status === 402) {
-                errorMessage = "Crédits insuffisants pour cette action.";
-            } else {
-                errorMessage = `Erreur serveur IA (Code: ${status}).`;
-            }
+        if (response.status === 401) {
+            errorMessage = "Session expirée ou non autorisée. Veuillez vous reconnecter.";
+        } else if (response.status === 402) {
+            errorMessage = `Erreur de facturation: ${errorMessage}`;
         }
         
         throw new Error(errorMessage);
     }
+
+    const data = await response.json();
 
     if (data.newBalance !== undefined && data.newBalance !== null) {
         useAppStore.getState().updateUserCredits(data.newBalance);

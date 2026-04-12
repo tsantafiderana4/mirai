@@ -78,11 +78,14 @@ Deno.serve(async (req) => {
         })
       }
 
-      const { data: newBalanceResult, error: rpcError } = await supabaseClient.rpc('consume_credits', { p_user_id: user.id, p_amount: cost })
+      const { data: newBalanceResult, error: rpcError } = await supabaseClient.rpc('consume_credits', { p_amount: cost })
       
       if (rpcError || newBalanceResult === null) {
         console.error('[Billing Error]', rpcError || 'Insufficient credits')
-        return new Response(JSON.stringify({ error: 'Crédits insuffisants ou accès refusé.' }), {
+        return new Response(JSON.stringify({ 
+          error: 'Crédits insuffisants ou accès refusé.',
+          details: rpcError ? rpcError.message : 'Balance returned null (insuffisant ou profil introuvable)'
+        }), {
           status: 402,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })

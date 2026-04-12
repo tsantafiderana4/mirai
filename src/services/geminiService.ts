@@ -118,8 +118,7 @@ const incrementSupportUsage = () => {
 export const chargeVoiceMinute = async (userId: string): Promise<boolean> => {
     try {
         const { data: newCredits, error: rpcError } = await supabase.rpc('consume_credits', { 
-            p_amount: CREDIT_COSTS.VOICE_CALL_PER_MINUTE,
-            p_user_id: userId
+            p_amount: CREDIT_COSTS.VOICE_CALL_PER_MINUTE
         });
         if (rpcError) {
             console.error('[Billing Error]', rpcError);

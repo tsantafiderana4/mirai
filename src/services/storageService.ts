@@ -463,7 +463,6 @@ export const storageService = {
       try {
           // Background sync
           supabase.rpc('consume_credits', {
-              p_user_id: userId,
               p_amount: amount
           }).then(({ data, error }) => {
               if (error) {
