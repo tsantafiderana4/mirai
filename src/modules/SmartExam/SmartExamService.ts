@@ -14,13 +14,19 @@ const callGeminiFunction = async (action: string, payload: Record<string, unknow
 
     if (error) {
         console.error(`[Gemini Function] Error calling ${action}:`, error);
-        // Try to extract a more descriptive error message if available
+        
         let errorMessage = "Erreur de communication avec l'IA";
+        
+        // Try to extract a more descriptive error message if available
         if (error.message && error.message.includes("non-2xx status code")) {
-            errorMessage = `L'IA est temporairement indisponible (Code: ${error.status || '500'}). Veuillez réessayer.`;
+            // If it's a 500, it might be a specific error from our Edge Function
+            // supabase.functions.invoke error object doesn't easily expose the body,
+            // but we can check if it's a known error type.
+            errorMessage = `L'IA est temporairement indisponible (Code: ${error.status || '500'}). Veuillez vérifier votre clé API Gemini.`;
         } else if (error.message) {
             errorMessage = error.message;
         }
+        
         throw new Error(errorMessage);
     }
 

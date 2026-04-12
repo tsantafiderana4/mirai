@@ -77,9 +77,15 @@ Deno.serve(async (req) => {
     let keys: string[] = []
     
     // Tentative de récupération depuis la base de données (Table api_keys)
-    const { data: dbKeys, error: keysError } = await supabaseClient.rpc('get_active_api_keys', { p_provider: 'gemini' })
-    if (!keysError && dbKeys && dbKeys.length > 0) {
-        keys = (dbKeys as { key_value: string }[]).map(k => k.key_value)
+    try {
+        const { data: dbKeys, error: keysError } = await supabaseClient.rpc('get_active_api_keys', { p_provider: 'gemini' })
+        if (!keysError && dbKeys && dbKeys.length > 0) {
+            keys = (dbKeys as { key_value: string }[]).map(k => k.key_value)
+        } else if (keysError && keysError.code !== 'P0001' && keysError.message !== 'function public.get_active_api_keys(text) does not exist') {
+            console.warn('[Keys RPC Warning]', keysError.message)
+        }
+    } catch (e) {
+        console.warn('[Keys RPC Exception]', e)
     }
 
     // Fallback sur les variables d'environnement si la BDD est vide
@@ -200,8 +206,12 @@ Deno.serve(async (req) => {
 
         if (!res.ok) {
             const errorText = await res.text();
+            let errorJson;
+            try { errorJson = JSON.parse(errorText); } catch { /* ignore */ }
+            
             console.error(`[Google API Error] ${res.status}:`, errorText);
-            throw new Error(`Google API Error: ${res.status} - ${errorText}`);
+            const message = errorJson?.error?.message || errorText;
+            throw new Error(`Google API Error (${res.status}): ${message}`);
         }
         const data = await res.json()
         const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}"
