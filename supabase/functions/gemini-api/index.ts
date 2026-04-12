@@ -134,7 +134,7 @@ Deno.serve(async (req) => {
     const selectedKey = keys[Math.floor(Math.random() * keys.length)]
     const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    const targetModel = model || 'gemini-3-flash-preview'
+    const targetModel = model || 'gemini-2.5-flash'
     const { systemInstruction, ...genConfig } = config || {}
 
     if (action === 'generate') {
@@ -260,7 +260,7 @@ Deno.serve(async (req) => {
             generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' } } } }
         }
 
-        const res = await fetch(`${BASE_URL}/${model || 'gemini-3-flash-preview'}:generateContent?key=${selectedKey}`, {
+        const res = await fetch(`${BASE_URL}/${model || 'gemini-2.5-flash'}:generateContent?key=${selectedKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
