@@ -162,7 +162,7 @@ const DebugConsole: React.FC = () => {
                       },
                       body: JSON.stringify({ 
                           action: 'generate',
-                          model: 'gemini-1.5-flash',
+                          model: 'gemini-1.5-flash-latest',
                           contents: { parts: [{ text: 'Hello' }] }
                       })
                   });

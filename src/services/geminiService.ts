@@ -140,8 +140,8 @@ export const chargeVoiceMinute = async (userId: string): Promise<boolean> => {
 };
 
 // Modèles par défaut
-export const TEXT_MODEL = 'gemini-1.5-flash';
-export const AUDIO_MODEL = 'gemini-1.5-flash';
+export const TEXT_MODEL = 'gemini-1.5-flash-latest';
+export const AUDIO_MODEL = 'gemini-1.5-flash-latest';
 
 // --- SERVICES EXPORTÉS ---
 
