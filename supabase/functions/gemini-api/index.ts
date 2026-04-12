@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
     const selectedKey = keys[Math.floor(Math.random() * keys.length)]
     const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    const targetModel = model || 'gemini-3-flash-preview'
+    const targetModel = model || 'gemini-1.5-flash'
     const { systemInstruction, ...genConfig } = config || {}
 
     if (action === 'generate') {
@@ -162,7 +162,9 @@ Deno.serve(async (req) => {
                                     const data = JSON.parse(jsonStr)
                                     const text = data.candidates?.[0]?.content?.parts?.[0]?.text
                                     if (text) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
-                                } catch (e) {}
+                                } catch (_e) {
+                                    // Ignore parse errors for individual chunks
+                                }
                             }
                         }
                     }
@@ -196,11 +198,23 @@ Deno.serve(async (req) => {
             body: JSON.stringify(payload)
         })
 
-        if (!res.ok) throw new Error(await res.text())
+        if (!res.ok) {
+            const errorText = await res.text();
+            console.error(`[Google API Error] ${res.status}:`, errorText);
+            throw new Error(`Google API Error: ${res.status} - ${errorText}`);
+        }
         const data = await res.json()
-        return new Response(JSON.stringify({ json: JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}"), newBalance }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}"
+        try {
+            const cleanText = rawText.replace(/```json\n?|```/g, '').trim();
+            return new Response(JSON.stringify({ json: JSON.parse(cleanText), newBalance }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            })
+        } catch (parseError: unknown) {
+            const errorMessage = parseError instanceof Error ? parseError.message : String(parseError);
+            console.error("[JSON Parse Error]", parseError, "Raw Text:", rawText);
+            throw new Error(`Failed to parse AI response as JSON: ${errorMessage}`);
+        }
     }
 
     if (action === 'generate_speech') {
@@ -209,7 +223,7 @@ Deno.serve(async (req) => {
             generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' } } } }
         }
 
-        const res = await fetch(`${BASE_URL}/${model || 'gemini-2.5-flash-preview-tts'}:generateContent?key=${selectedKey}`, {
+        const res = await fetch(`${BASE_URL}/${model || 'gemini-1.5-flash'}:generateContent?key=${selectedKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)

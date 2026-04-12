@@ -1,5 +1,4 @@
 
-import { Type } from "@google/genai";
 import { UserProfile } from "../../types";
 import { SmartExam, ExamResultDetailed, ExamType } from "./types";
 import { TEXT_MODEL, generateText } from "../../services/geminiService"; // Use generateText or expose callGeminiFunction if needed, but better to use existing services or refactor
@@ -109,21 +108,21 @@ export const SmartExamService = {
             }
             `;
 
-            // Define schema for Edge Function
+            // Define schema for Edge Function - Use uppercase strings for REST API compatibility
             const schema = {
-                type: Type.OBJECT,
+                type: "OBJECT",
                 properties: {
                     sections: {
-                        type: Type.ARRAY,
+                        type: "ARRAY",
                         items: {
-                            type: Type.OBJECT,
+                            type: "OBJECT",
                             properties: {
-                                id: { type: Type.STRING },
-                                type: { type: Type.STRING },
-                                question: { type: Type.STRING },
-                                context: { type: Type.STRING },
-                                options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                                weight: { type: Type.NUMBER }
+                                id: { type: "STRING" },
+                                type: { type: "STRING" },
+                                question: { type: "STRING" },
+                                context: { type: "STRING" },
+                                options: { type: "ARRAY", items: { type: "STRING" } },
+                                weight: { type: "NUMBER" }
                             },
                             required: ["id", "type", "question", "weight"]
                         }
@@ -193,21 +192,21 @@ export const SmartExamService = {
 
         try {
             const schema = {
-                type: Type.OBJECT,
+                type: "OBJECT",
                 properties: {
-                    globalScore: { type: Type.NUMBER },
+                    globalScore: { type: "NUMBER" },
                     skillScores: {
-                        type: Type.OBJECT,
+                        type: "OBJECT",
                         properties: {
-                            reading: { type: Type.NUMBER },
-                            writing: { type: Type.NUMBER },
-                            listening: { type: Type.NUMBER },
-                            speaking: { type: Type.NUMBER }
+                            reading: { type: "NUMBER" },
+                            writing: { type: "NUMBER" },
+                            listening: { type: "NUMBER" },
+                            speaking: { type: "NUMBER" }
                         }
                     },
-                    detectedLevel: { type: Type.STRING },
-                    feedback: { type: Type.STRING },
-                    confidenceScore: { type: Type.NUMBER }
+                    detectedLevel: { type: "STRING" },
+                    feedback: { type: "STRING" },
+                    confidenceScore: { type: "NUMBER" }
                 }
             };
 
