@@ -145,7 +145,7 @@ Deno.serve(async (req) => {
         let defaultChain = ['gemini-3-flash-preview', 'gemini-3.1-flash-preview', 'gemini-2.5-flash', 'gemini-1.5-flash'];
         
         if (actionType === 'audio') {
-            defaultChain = ['gemini-2.5-flash-tts-preview', 'gemini-3.1-flash-live-preview', 'gemini-2.5-flash-live-preview', 'gemini-2.5-pro-tts-preview'];
+            defaultChain = ['gemini-2.5-flash-tts', 'gemini-2.5-pro-tts', 'gemini-2.5-flash-lite-preview-tts', 'gemini-3-flash-tts-preview'];
         }
 
         const modelsToTry = [...new Set([requestedModel, ...defaultChain])];
