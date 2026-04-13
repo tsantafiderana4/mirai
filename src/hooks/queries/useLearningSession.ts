@@ -18,9 +18,7 @@ export const useLearningSession = (
     const query = useQuery({
         queryKey,
         queryFn: async () => {
-            console.log("useLearningSession queryFn called with:", { userId, targetLanguage, level, sessionType });
             if (!userId || !targetLanguage) {
-                console.warn("useLearningSession queryFn returning null because missing userId or targetLanguage");
                 return null;
             }
             

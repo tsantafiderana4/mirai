@@ -108,28 +108,36 @@ export const SmartExamService = {
             // 2. Generate Exam
             const prompt = `
             Génère un examen de certification de type "${type}" pour l'étudiant "${user.username}" (Langue cible : "${lang}").
-            L'examen doit être rigoureux, professionnel et cibler ses difficultés récentes : ${difficulties}.
+            L'examen doit être extrêmement rigoureux, professionnel et réaliste.
+            
+            CONTEXTE & IMMERSION :
+            - Utilise des scénarios du monde réel (vie professionnelle, voyages d'affaires, situations sociales complexes).
+            - Les questions doivent tester non seulement la langue, mais aussi la capacité à comprendre les nuances et le contexte.
+            - Pour le niveau "${level}", assure-toi que le vocabulaire est précis et que les structures grammaticales sont celles attendues à ce niveau CEFR.
+            
+            CIBLAGE PÉDAGOGIQUE :
+            - Difficultés récentes de l'étudiant à intégrer : ${difficulties}.
             
             IMPORTANT : 
             - L'examen doit être STRICTEMENT adapté au niveau cible "${level}".
             - Les instructions des questions (le champ "question") doivent être rédigées en "${explanationLang}".
-            - Ne PAS inclure de questions d'un niveau supérieur (par exemple, pas de B1/B2 si le niveau cible est A1).
+            - Ne PAS inclure de questions d'un niveau supérieur.
             La difficulté doit être progressive AU SEIN du niveau ${level} :
-            - Questions 1 à 5 : Facile (Début de niveau ${level})
-            - Questions 6 à 10 : Moyen (Milieu de niveau ${level})
-            - Questions 11 à 15 : Difficile (Fin de niveau ${level})
-            - Questions 16 à 20 : Très difficile (Test limite du niveau ${level})
+            - Questions 1 à 5 : Facile (Bases du niveau ${level})
+            - Questions 6 à 10 : Moyen (Application standard du niveau ${level})
+            - Questions 11 à 15 : Difficile (Nuances et complexité du niveau ${level})
+            - Questions 16 à 20 : Expert (Maîtrise totale du niveau ${level})
             
             Structure requise (JSON) : 20 questions au total.
-            - 5 questions de Compréhension Orale (Listening) - Fournir le texte dans 'context' (il sera lu par synthèse vocale et caché à l'étudiant).
-            - 5 questions de Compréhension Écrite/Grammaire (QCM) - Variez absolument les formats : Choix multiples, Vrai ou Faux, Phrases à compléter.
-            - 5 questions d'Expression Écrite (Writing) - Sujets variés (phrases, paragraphes).
-            - 5 questions d'Expression Orale (Speaking) - Mises en situation.
+            - 5 questions de Compréhension Orale (Listening) - Fournir un script immersif et naturel dans 'context'.
+            - 5 questions de Compréhension Écrite/Grammaire (QCM) - Scénarios réalistes, pas de phrases isolées sans contexte.
+            - 5 questions d'Expression Écrite (Writing) - Tâches professionnelles (emails, rapports courts, messages formels).
+            - 5 questions d'Expression Orale (Speaking) - Jeux de rôle et mises en situation interactives.
             
             Output JSON Schema:
             {
                 "sections": [
-                    { "id": "l1", "type": "listening", "question": "Écoutez l'audio et répondez à la question.", "context": "Texte secret à lire...", "options": ["A", "B", "C", "D"], "weight": 2 },
+                    { "id": "l1", "type": "listening", "question": "...", "context": "...", "options": ["A", "B", "C", "D"], "weight": 2 },
                     { "id": "q1", "type": "qcm", "question": "...", "options": ["A", "B", "C", "D"], "weight": 1 },
                     { "id": "w1", "type": "writing", "question": "...", "weight": 3 },
                     { "id": "s1", "type": "speaking", "question": "...", "weight": 3 }
@@ -204,15 +212,16 @@ export const SmartExamService = {
         ${exam.sections.map(s => `[${s.type.toUpperCase()}] Q: ${s.question} \n R: ${answers[s.id] ? answers[s.id] : "AUCUNE RÉPONSE (Temps écoulé ou ignoré)"}`).join('\n\n')}
         
         Tâche :
-        1. Analyse la grammaire, le vocabulaire, la cohérence de manière très stricte et professionnelle.
+        1. Analyse la grammaire, le vocabulaire, la cohérence de manière extrêmement rigoureuse.
         2. Estime le niveau RÉEL (CEFR) basé sur la performance globale.
-           - IMPORTANT : Si le score est inférieur à 70/100, le niveau détecté NE PEUT PAS être supérieur au niveau visé (${exam.targetLevel}). Il doit être "Inférieur à ${exam.targetLevel}" ou le niveau en dessous.
-           - Si le score est élevé (> 80), tu peux estimer un niveau supérieur si le vocabulaire le justifie.
+           - IMPORTANT : Si le score est inférieur à 70/100, l'étudiant est considéré comme NON ADMIS pour le niveau ${exam.targetLevel}.
+           - Le niveau détecté doit refléter la réalité : si les fautes sont nombreuses, n'hésite pas à descendre d'un cran.
         3. Calcule un score sur 100 (sois exigeant, les fautes de base pénalisent lourdement).
+           - Seuil de réussite : 70/100.
            - Si "AUCUNE RÉPONSE", comptez 0 pour cette question.
         4. Donne un feedback constructif et professionnel en "${explanationLang}". 
-           - Si l'étudiant réussit (>= 70), félicite-le de manière formelle.
-           - Si l'étudiant échoue (< 70), donne-lui du courage, des recommandations précises et un plan d'action concret étape par étape pour s'améliorer.
+           - Si l'étudiant réussit (>= 70), félicite-le chaleureusement et mentionne qu'il peut débloquer son certificat.
+           - Si l'étudiant échoue (< 70), explique-lui précisément pourquoi, sans détour mais avec empathie, et donne-lui un plan d'action concret.
            - RECOMMANDATIONS CIBLÉES :
              * Si la grammaire/vocabulaire est faible : Recommande de "renforcer les bases via le Chat interactif".
              * Si l'expression orale/écoute est faible : Recommande de "pratiquer l'oral via l'Appel Vocal (TeacherMada Live)".
@@ -256,7 +265,7 @@ export const SmartExamService = {
 
             // NOTE: Certificate is NOT created automatically anymore.
             // User must pay 100 credits to unlock it if passed.
-            let certId = undefined;
+            const certId = undefined;
 
             if (exam.type === 'certification' && passed) {
                 // Notification for passing (but not certificate yet)

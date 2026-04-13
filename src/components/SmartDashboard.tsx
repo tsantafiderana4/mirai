@@ -1,7 +1,7 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
-import { UserProfile, ChatMessage, SmartNotification, VoiceName } from '../types';
-import { X, LogOut, Sun, Moon, Book, Trophy, Loader2, Save, Globe, Download, ShieldCheck, Upload, CreditCard, Plus, AlertTriangle, MessageCircle, Phone, Brain, ArrowRight, Award, ChevronRight, User, Bell, Check, Trash2, Info, CheckCircle, XCircle, BarChart3 } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { UserProfile, SmartNotification, VoiceName } from '../types';
+import { X, Sun, Moon, Book, Trophy, Loader2, Globe, Download, ShieldCheck, Upload, CreditCard, Plus, AlertTriangle, MessageCircle, Phone, Brain, ArrowRight, Award, ChevronRight, User, Bell, Check, Trash2, Info, CheckCircle, XCircle, BarChart3, Lock as LockIcon, Save as SaveIcon, LogOut as LogOutIcon } from 'lucide-react';
 import { useCertificates } from '../hooks/queries/useCertificates';
 import { useExamResults } from '../hooks/queries/useExamResults';
 import { useNotifications } from '../hooks/queries/useNotifications';
@@ -30,7 +30,7 @@ interface Props {
 const SmartDashboard: React.FC<Props> = ({ 
     onClose, onOpenAdmin, onShowPayment, onStartPractice, onStartExercise, onStartVoice, onStartExam 
 }) => {
-  const { user, setUser, isDarkMode, toggleDarkMode, logout, currentSession } = useAppStore();
+  const { user, setUser, isDarkMode, toggleDarkMode, logout } = useAppStore();
   const { t, setLanguage } = useTranslation();
   const language = useTranslation().language;
 
@@ -84,9 +84,10 @@ const SmartDashboard: React.FC<Props> = ({
 
     const combined = [...enrichedCertificates];
     
-    // 2. Add passed exams that don't have a certificate yet
+    // 2. Add passed exams that don't have a certificate yet (Locked certificates)
     const passedExams = examResults.filter((exam: any) => 
         exam.passed && 
+        (exam.score >= 70 || (exam.details?.globalScore || 0) >= 70) &&
         !certificates.some((cert: any) => cert.examId === exam.id)
     );
 
@@ -648,6 +649,7 @@ const SmartDashboard: React.FC<Props> = ({
                             {displayCertificates.map((cert) => (
                                 <div key={cert.id} className="group relative perspective-1000 cursor-pointer"
                                     onClick={() => {
+                                        const isTemp = cert.id.toString().startsWith('temp-');
                                         const resultDetails: ExamResultDetailed = {
                                             examId: cert.examId || '',
                                             userId: cert.userId,
@@ -659,12 +661,12 @@ const SmartDashboard: React.FC<Props> = ({
                                             skillScores: cert.skillScores,
                                             detectedLevel: cert.level,
                                             passed: true,
-                                            certificateId: cert.id,
+                                            certificateId: isTemp ? null : cert.id,
                                             feedback: cert.feedback,
                                             confidenceScore: 100
                                         };
                                         setSelectedResult(resultDetails);
-                                        setStartWithCert(true);
+                                        setStartWithCert(!isTemp); // Only start with cert if it's NOT a temp/locked one
                                     }}
                                 >
                                     <div className="absolute inset-0 bg-indigo-500 rounded-2xl transform translate-y-2 translate-x-2 opacity-0 group-hover:opacity-100 transition-all duration-300"></div>
@@ -679,17 +681,22 @@ const SmartDashboard: React.FC<Props> = ({
                                         </div>
 
                                         <div className="p-6 pt-0 relative">
-                                            <div className="w-16 h-16 rounded-xl bg-white dark:bg-slate-700 shadow-lg -mt-8 mb-4 flex items-center justify-center border-4 border-white dark:border-slate-800">
+                                            <div className="w-16 h-16 rounded-xl bg-white dark:bg-slate-700 shadow-lg -mt-8 mb-4 flex items-center justify-center border-4 border-white dark:border-slate-800 relative">
                                                 <div className="text-2xl font-black text-[#1b365d] dark:text-white">
                                                     {cert.level?.substring(0, 2)}
                                                 </div>
+                                                {cert.id.toString().startsWith('temp-') && (
+                                                    <div className="absolute -top-2 -right-2 bg-amber-500 text-white p-1 rounded-full shadow-lg">
+                                                        <LockIcon className="w-3 h-3" />
+                                                    </div>
+                                                )}
                                             </div>
 
                                             <h4 className="text-lg font-black text-slate-900 dark:text-white mb-1">
                                                 {cert.language}
                                             </h4>
                                             <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4">
-                                                {t('dashboard.cert_success')}
+                                                {cert.id.toString().startsWith('temp-') ? (t('exam.cert_locked') || "Certificat disponible (Verrouillé)") : (t('dashboard.cert_success') || "Certificat obtenu")}
                                             </p>
 
                                             <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-700">
@@ -950,7 +957,7 @@ const SmartDashboard: React.FC<Props> = ({
                             </select>
                         </div>
                         <button onClick={handleSaveProfile} className="w-full py-4 bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold rounded-2xl flex items-center justify-center gap-2 shadow-lg hover:scale-[1.02] transition-transform">
-                            <Save className="w-5 h-5"/> {t('dashboard.save_changes')}
+                            <SaveIcon className="w-5 h-5"/> {t('dashboard.save_changes')}
                         </button>
                     </div>
                 </div>
@@ -963,7 +970,7 @@ const SmartDashboard: React.FC<Props> = ({
                 onClick={() => { logout(); onClose(); }}
                 className="w-full py-3 bg-red-50 dark:bg-red-900/10 text-red-500 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors text-sm"
             >
-                <LogOut className="w-4 h-4" /> {t('dashboard.logout')}
+                <LogOutIcon className="w-4 h-4" /> {t('dashboard.logout')}
             </button>
         </div>
       </div>

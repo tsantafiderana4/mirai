@@ -23,7 +23,7 @@ export const useExamResults = (userId: string | undefined) => {
                 level: e.level,
                 score: e.score,
                 totalQuestions: e.total_questions,
-                passed: e.score >= (e.total_questions / 2),
+                passed: e.score >= 70,
                 date: new Date(e.created_at).getTime(),
                 details: e.details
             })) as ExamResult[];
@@ -58,7 +58,7 @@ export const useExamResults = (userId: string | undefined) => {
                 level: data.level,
                 score: data.score,
                 totalQuestions: data.total_questions,
-                passed: data.score >= (data.total_questions / 2),
+                passed: data.score >= 70,
                 date: new Date(data.created_at).getTime(),
                 details: data.details
             } as ExamResult;
