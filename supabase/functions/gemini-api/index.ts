@@ -18,6 +18,9 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders })
   }
 
+  let creditsDeducted = 0;
+  let supabaseClientForRefund: ReturnType<typeof createClient> | null = null;
+
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')
@@ -60,6 +63,7 @@ Deno.serve(async (req) => {
       supabaseAnonKey,
       { global: { headers: { Authorization: authHeader } } }
     )
+    supabaseClientForRefund = supabaseClient;
 
     let cost = COSTS[action] || 0
     if (action === 'generate_exam') {
@@ -67,8 +71,6 @@ Deno.serve(async (req) => {
     }
 
     let newBalance: number | null = null;
-    let creditsDeducted = 0;
-    let supabaseClientForRefund = supabaseClient;
 
     if (cost > 0) {
       const token = authHeader.replace('Bearer ', '');
@@ -145,7 +147,7 @@ Deno.serve(async (req) => {
         let defaultChain = ['gemini-3-flash-preview', 'gemini-3.1-flash-preview', 'gemini-2.5-flash', 'gemini-1.5-flash'];
         
         if (actionType === 'audio') {
-            defaultChain = ['gemini-2.5-flash-tts-001', 'gemini-2.5-pro-tts-001', 'gemini-2.5-flash-live', 'gemini-3.1-flash-live'];
+            defaultChain = ['gemini-2.5-flash-tts-001', 'gemini-2.5-pro-tts-001', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'];
         }
 
         const modelsToTry = [...new Set([requestedModel, ...defaultChain])];
@@ -260,7 +262,7 @@ Deno.serve(async (req) => {
                                     const data = JSON.parse(jsonStr)
                                     const text = data.candidates?.[0]?.content?.parts?.[0]?.text
                                     if (text) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
-                                } catch (_e) {
+                                } catch (e) {
                                     // Ignore parse errors for individual chunks
                                 }
                             }

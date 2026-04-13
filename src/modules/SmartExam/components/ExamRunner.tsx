@@ -229,8 +229,8 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
         setPlayCounts(prev => ({ ...prev, [currentSection.id]: currentPlays + 1 }));
         
         try {
-            // Race between Gemini TTS and 15s timeout
-            const TIMEOUT_MS = 15000;
+            // Race between Gemini TTS and 30s timeout
+            const TIMEOUT_MS = 30000;
             const pcmBuffer = await Promise.race([
                 generateSpeech(text),
                 new Promise<null>((resolve) => setTimeout(() => resolve(null), TIMEOUT_MS))
