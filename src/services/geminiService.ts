@@ -141,7 +141,7 @@ export const chargeVoiceMinute = async (userId: string): Promise<boolean> => {
 
 // Modèles par défaut
 export const TEXT_MODEL = 'gemini-3-flash-preview';
-export const AUDIO_MODEL = 'gemini-3-flash-preview';
+export const AUDIO_MODEL = 'gemini-2.5-flash-tts-preview';
 
 // --- SERVICES EXPORTÉS ---
 
@@ -250,7 +250,8 @@ export async function* sendMessageStream(
 
 // 3. TEXT-TO-SPEECH (TTS)
 export const generateSpeech = async (text: string, voiceName: string = 'Kore'): Promise<ArrayBuffer | null> => {
-    const MAX_RETRIES = 3;
+    const AUDIO_MODELS = ['gemini-2.5-flash-tts-preview', 'gemini-3.1-flash-live-preview', 'gemini-2.5-flash-live-preview', 'gemini-2.5-pro-tts-preview'];
+    const MAX_RETRIES = AUDIO_MODELS.length - 1;
     
     // Fonction pour récupérer une clé API de manière dynamique
     const getApiKey = async (): Promise<string> => {
@@ -264,7 +265,8 @@ export const generateSpeech = async (text: string, voiceName: string = 'Kore'): 
     let apiKey = '';
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-            console.log(`[Gemini TTS] Generating speech (attempt ${attempt + 1})...`);
+            const currentModel = AUDIO_MODELS[attempt];
+            console.log(`[Gemini TTS] Generating speech with model ${currentModel} (attempt ${attempt + 1})...`);
             
             apiKey = await getApiKey();
             if (!apiKey) {
@@ -274,7 +276,7 @@ export const generateSpeech = async (text: string, voiceName: string = 'Kore'): 
             const ai = new GoogleGenAI({ apiKey });
 
             const response = await ai.models.generateContent({
-                model: AUDIO_MODEL,
+                model: currentModel,
                 contents: [{ parts: [{ text: text }] }],
                 config: {
                     responseModalities: [Modality.AUDIO],

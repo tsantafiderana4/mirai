@@ -61,8 +61,15 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     )
 
-    const cost = COSTS[action] || 0
+    let cost = COSTS[action] || 0
+    if (action === 'generate_exam') {
+        cost = body.examType === 'certification' ? 100 : 40;
+    }
+
     let newBalance: number | null = null;
+    let creditsDeducted = 0;
+    let supabaseClientForRefund = supabaseClient;
+
     if (cost > 0) {
       const token = authHeader.replace('Bearer ', '');
       const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
@@ -92,6 +99,7 @@ Deno.serve(async (req) => {
       }
       
       newBalance = newBalanceResult;
+      creditsDeducted = cost;
     }
 
     if (action === 'charge_voice_minute') {
@@ -131,10 +139,15 @@ Deno.serve(async (req) => {
     }
 
     // Fonction de rotation intelligente (Modèles + Clés)
-    async function fetchWithSmartRotation(endpoint: string, payload: any, availableKeys: string[], requestedModel: string) {
+    async function fetchWithSmartRotation(endpoint: string, payload: any, availableKeys: string[], requestedModel: string, actionType: string = 'text') {
         const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
         // Chaîne de fallback par défaut
-        const defaultChain = ['gemini-3-flash-preview', 'gemini-3.1-flash-preview', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+        let defaultChain = ['gemini-3-flash-preview', 'gemini-3.1-flash-preview', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+        
+        if (actionType === 'audio') {
+            defaultChain = ['gemini-2.5-flash-tts-preview', 'gemini-3.1-flash-live-preview', 'gemini-2.5-flash-live-preview', 'gemini-2.5-pro-tts-preview'];
+        }
+
         const modelsToTry = [...new Set([requestedModel, ...defaultChain])];
         
         // Mélanger les clés pour équilibrer la charge
@@ -261,7 +274,7 @@ Deno.serve(async (req) => {
         return new Response(stream, { headers: { ...corsHeaders, 'Content-Type': 'text/event-stream' } })
     }
 
-    if (action === 'generate_json') {
+    if (action === 'generate_json' || action === 'generate_exam') {
         let schema = config?.responseSchema
         if (schemaType === 'ARRAY_VOCAB') {
             schema = { type: 'ARRAY', items: { type: 'OBJECT', properties: { word: { type: 'STRING' }, translation: { type: 'STRING' }, example: { type: 'STRING' } } } }
@@ -299,7 +312,7 @@ Deno.serve(async (req) => {
             generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' } } } }
         }
 
-        const res = await fetchWithSmartRotation('generateContent', payload, keys, targetModel);
+        const res = await fetchWithSmartRotation('generateContent', payload, keys, targetModel, 'audio');
         
         const data = await res.json()
         return new Response(JSON.stringify({ audioBase64: data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data, newBalance }), {
@@ -310,6 +323,10 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: `Action inconnue: ${action}` }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 
   } catch (error: unknown) {
+    if (creditsDeducted > 0 && supabaseClientForRefund) {
+        console.log(`[Refund] System error occurred, refunding ${creditsDeducted} credits...`);
+        await supabaseClientForRefund.rpc('consume_credits', { p_amount: -creditsDeducted });
+    }
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[Edge Function Error]', error)
     return new Response(JSON.stringify({ error: errorMessage }), {

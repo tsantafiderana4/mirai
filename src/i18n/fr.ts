@@ -71,7 +71,7 @@ export const fr = {
     online: "En ligne",
     connection_error: "Erreur de connexion",
     select: "Sélectionner",
-    working: "{teacherName} travaille...",
+    working: "TeacherMada Mada travaille...",
     important_note: "Note importante :",
     refuse: "Refuser",
     guide: {

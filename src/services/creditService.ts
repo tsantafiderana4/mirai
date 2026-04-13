@@ -11,7 +11,7 @@ export const CREDIT_COSTS = {
   DIAGNOSTIC: 40,
   EXAM: 100,
   CERTIFICATE: 100,
-  CERTIFICATE_UNLOCK: 50,
+  CERTIFICATE_UNLOCK: 100,
 };
 
 export async function deductCredits(amount: number, userId: string): Promise<number | null> {

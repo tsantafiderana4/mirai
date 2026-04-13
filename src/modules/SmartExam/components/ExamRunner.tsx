@@ -371,60 +371,62 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
 
     if (!hasStarted) {
         return (
-            <div className="fixed inset-0 z-[100] bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6 font-sans">
-                <div className="max-w-2xl w-full bg-white dark:bg-slate-900 rounded-2xl shadow-2xl p-8 border border-slate-200 dark:border-slate-800">
-                    <div className="text-center mb-8">
-                        <div className="w-20 h-20 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
-                            <CheckCircle className="w-10 h-10 text-indigo-600 dark:text-indigo-400" />
+            <div className="fixed inset-0 z-[100] bg-slate-50 dark:bg-slate-950 overflow-y-auto font-sans">
+                <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6">
+                    <div className="max-w-2xl w-full bg-white dark:bg-slate-900 rounded-2xl shadow-2xl p-6 sm:p-8 border border-slate-200 dark:border-slate-800 my-auto">
+                        <div className="text-center mb-8">
+                            <div className="w-20 h-20 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
+                                <CheckCircle className="w-10 h-10 text-indigo-600 dark:text-indigo-400" />
+                            </div>
+                            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white mb-2">{t('exam_runner.ready_title')}</h1>
+                            <p className="text-slate-500 dark:text-slate-400">{t('exam_runner.read_rules')}</p>
                         </div>
-                        <h1 className="text-3xl font-black text-slate-900 dark:text-white mb-2">{t('exam_runner.ready_title')}</h1>
-                        <p className="text-slate-500 dark:text-slate-400">{t('exam_runner.read_rules')}</p>
-                    </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-                        <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
-                            <div className="flex items-center gap-3 mb-2">
-                                <Clock className="w-5 h-5 text-indigo-500" />
-                                <h3 className="font-bold text-slate-800 dark:text-slate-200">{t('exam_runner.time_limit_title')}</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                            <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <Clock className="w-5 h-5 text-indigo-500" />
+                                    <h3 className="font-bold text-slate-800 dark:text-slate-200">{t('exam_runner.time_limit_title')}</h3>
+                                </div>
+                                <p className="text-sm text-slate-500" dangerouslySetInnerHTML={{ __html: t('exam_runner.time_limit_desc') }} />
                             </div>
-                            <p className="text-sm text-slate-500" dangerouslySetInnerHTML={{ __html: t('exam_runner.time_limit_desc') }} />
-                        </div>
-                        <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
-                            <div className="flex items-center gap-3 mb-2">
-                                <AlertCircle className="w-5 h-5 text-amber-500" />
-                                <h3 className="font-bold text-slate-800 dark:text-slate-200">{t('exam_runner.anti_cheat_title')}</h3>
+                            <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <AlertCircle className="w-5 h-5 text-amber-500" />
+                                    <h3 className="font-bold text-slate-800 dark:text-slate-200">{t('exam_runner.anti_cheat_title')}</h3>
+                                </div>
+                                <p className="text-sm text-slate-500" dangerouslySetInnerHTML={{ __html: t('exam_runner.anti_cheat_desc') }} />
                             </div>
-                            <p className="text-sm text-slate-500" dangerouslySetInnerHTML={{ __html: t('exam_runner.anti_cheat_desc') }} />
-                        </div>
-                        <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
-                            <div className="flex items-center gap-3 mb-2">
-                                <Volume2 className="w-5 h-5 text-emerald-500" />
-                                <h3 className="font-bold text-slate-800 dark:text-slate-200">{t('exam_runner.audio_title')}</h3>
+                            <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <Volume2 className="w-5 h-5 text-emerald-500" />
+                                    <h3 className="font-bold text-slate-800 dark:text-slate-200">{t('exam_runner.audio_title')}</h3>
+                                </div>
+                                <p className="text-sm text-slate-500" dangerouslySetInnerHTML={{ __html: t('exam_runner.audio_desc') }} />
                             </div>
-                            <p className="text-sm text-slate-500" dangerouslySetInnerHTML={{ __html: t('exam_runner.audio_desc') }} />
-                        </div>
-                        <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
-                            <div className="flex items-center gap-3 mb-2">
-                                <Mic className="w-5 h-5 text-rose-500" />
-                                <h3 className="font-bold text-slate-800 dark:text-slate-200">{t('exam_runner.mic_title')}</h3>
+                            <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <Mic className="w-5 h-5 text-rose-500" />
+                                    <h3 className="font-bold text-slate-800 dark:text-slate-200">{t('exam_runner.mic_title')}</h3>
+                                </div>
+                                <p className="text-sm text-slate-500">{t('exam_runner.mic_desc')}</p>
                             </div>
-                            <p className="text-sm text-slate-500">{t('exam_runner.mic_desc')}</p>
                         </div>
-                    </div>
 
-                    <div className="flex gap-4">
-                        <button 
-                            onClick={onCancel}
-                            className="flex-1 py-4 px-6 rounded-xl font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors"
-                        >
-                            {t('exam_runner.cancel')}
-                        </button>
-                        <button 
-                            onClick={handleStart}
-                            className="flex-[2] py-4 px-6 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-lg shadow-indigo-500/30 transition-all transform hover:scale-[1.02] flex items-center justify-center gap-2"
-                        >
-                            {t('exam_runner.start_exam')} <ArrowRight className="w-5 h-5" />
-                        </button>
+                        <div className="flex flex-col sm:flex-row gap-4">
+                            <button 
+                                onClick={onCancel}
+                                className="w-full sm:w-auto sm:flex-1 py-4 px-6 rounded-xl font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors"
+                            >
+                                {t('exam_runner.cancel')}
+                            </button>
+                            <button 
+                                onClick={handleStart}
+                                className="w-full sm:w-auto sm:flex-[2] py-4 px-6 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-lg shadow-indigo-500/30 transition-all transform hover:scale-[1.02] flex items-center justify-center gap-2"
+                            >
+                                {t('exam_runner.start_exam')} <ArrowRight className="w-5 h-5" />
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

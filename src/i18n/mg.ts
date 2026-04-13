@@ -71,7 +71,7 @@ export const mg = {
     online: "Misy internet",
     connection_error: "Olana ara-pifandraisana",
     select: "Hifidy",
-    working: "Miasa i {teacherName}...",
+    working: "Miasa i TeacherMada Mada...",
     important_note: "Fanamarihana lehibe :",
     refuse: "Mandà",
     guide: {

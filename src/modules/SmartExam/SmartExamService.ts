@@ -159,7 +159,8 @@ export const SmartExamService = {
                 }
             };
 
-            const data = await callGeminiFunction('generate_json', {
+            const data = await callGeminiFunction('generate_exam', {
+                examType: type,
                 model: TEXT_MODEL,
                 contents: prompt,
                 config: {
@@ -170,6 +171,9 @@ export const SmartExamService = {
             const sections = data.json?.sections;
             
             if (!sections || !Array.isArray(sections) || sections.length === 0) {
+                // Refund credits since the generation failed to produce a valid exam
+                const cost = type === 'certification' ? 100 : 40;
+                await supabase.rpc('consume_credits', { p_amount: -cost });
                 throw new Error("Format d'examen invalide (Sections manquantes)");
             }
 
