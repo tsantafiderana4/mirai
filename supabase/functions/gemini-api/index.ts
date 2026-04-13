@@ -147,7 +147,7 @@ Deno.serve(async (req) => {
         let defaultChain = ['gemini-3-flash-preview', 'gemini-3.1-flash-preview', 'gemini-2.5-flash', 'gemini-1.5-flash'];
         
         if (actionType === 'audio') {
-            defaultChain = ['gemini-2.5-flash-tts-001', 'gemini-2.5-pro-tts-001', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'];
+            defaultChain = ['gemini-2.5-flash-tts-001', 'gemini-2.5-pro-tts-001', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash-8b', 'gemini-2.0-flash-exp'];
         }
 
         const modelsToTry = [...new Set([requestedModel, ...defaultChain])];
@@ -185,8 +185,9 @@ Deno.serve(async (req) => {
                         continue; // Quota dépassé, on essaie la clé suivante
                     } else if (status === 400 && lastErrorText.includes("API key not valid")) {
                         continue; // Clé invalide, on essaie la clé suivante
-                    } else if (status === 404 || status === 503) {
-                        break; // Modèle introuvable ou surchargé, on passe au modèle suivant
+                    } else if (status === 404 || status === 503 || status === 400) {
+                        console.warn(`[Smart Rotation] Skipping model ${currentModel} due to status ${status}`);
+                        break; // Modèle introuvable, surchargé ou erreur client (ex: modality not supported), on passe au modèle suivant
                     } else {
                         // Autres erreurs (ex: prompt invalide), on ne réessaie pas
                         let errorJson;

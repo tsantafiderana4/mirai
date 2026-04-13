@@ -1,8 +1,8 @@
 import { UserProfile, ChatMessage, ExerciseItem } from "../types";
 import { SYSTEM_PROMPT_TEMPLATE, SUPPORT_AGENT_PROMPT } from "../constants";
-import { supabase } from "../lib/supabase";
+import { supabase, supabaseUrl, supabaseAnonKey } from "../lib/supabase";
 import { useAppStore } from '../store/useAppStore';
-import { GoogleGenAI, Modality, Type } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { CREDIT_COSTS, deductCredits } from "./creditService";
 
 // Cache the API keys to avoid querying DB on every request
@@ -250,83 +250,56 @@ export async function* sendMessageStream(
 
 // 3. TEXT-TO-SPEECH (TTS)
 export const generateSpeech = async (text: string, voiceName: string = 'Kore'): Promise<ArrayBuffer | null> => {
-    const AUDIO_MODELS = ['gemini-2.5-flash-tts-001', 'gemini-2.5-pro-tts-001', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'];
-    const MAX_RETRIES = AUDIO_MODELS.length - 1;
-    
-    // Fonction pour récupérer une clé API de manière dynamique
-    const getApiKey = async (): Promise<string> => {
-        try {
-            return await getGeminiApiKey();
-        } catch (e) {
-            return '';
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+
+        if (!token) {
+            console.warn("[Gemini TTS] No session found, falling back to browser TTS.");
+            return null;
         }
-    };
 
-    let apiKey = '';
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        try {
-            const currentModel = AUDIO_MODELS[attempt];
-            console.log(`[Gemini TTS] Generating speech with model ${currentModel} (attempt ${attempt + 1})...`);
-            
-            apiKey = await getApiKey();
-            if (!apiKey) {
-                throw new Error("Aucune clé API Gemini disponible.");
-            }
+        const response = await fetch(`${supabaseUrl}/functions/v1/gemini-api`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'apikey': supabaseAnonKey
+            },
+            body: JSON.stringify({ 
+                action: 'generate_speech', 
+                text, 
+                voiceName,
+                targetModel: 'gemini-1.5-flash' // Edge function will handle rotation
+            })
+        });
 
-            const ai = new GoogleGenAI({ apiKey });
+        if (!response.ok) {
+            const err = await response.json();
+            console.warn("[Gemini TTS] Edge function failed:", err);
+            return null;
+        }
 
-            const response = await ai.models.generateContent({
-                model: currentModel,
-                contents: [{ parts: [{ text: text }] }],
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: {
-                        voiceConfig: {
-                            prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' },
-                        },
-                    },
-                },
-            });
-
-            const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-            if (!base64Audio) {
-                throw new Error("No audio data received.");
-            }
-
-            // Deduct credits directly via RPC (Reduced to 1 credit)
-            /*
-            const userId = useAppStore.getState().user?.id;
-            if (userId) {
-                const newCredits = await deductCredits(CREDIT_COSTS.AUDIO_PRONUNCIATION, userId);
-                if (newCredits !== null) {
-                    useAppStore.getState().updateUserCredits(newCredits);
-                } else {
-                    throw new Error("Crédits insuffisants");
-                }
-            } else {
-                throw new Error("Utilisateur non authentifié");
-            }
-            */
-
-            const binaryString = atob(base64Audio);
+        const data = await response.json();
+        if (data.audioBase64) {
+            const binaryString = atob(data.audioBase64);
             const len = binaryString.length;
             const bytes = new Uint8Array(len);
             for (let i = 0; i < len; i++) {
                 bytes[i] = binaryString.charCodeAt(i);
             }
-            console.log("[Gemini TTS] Audio generated successfully.");
-            return bytes.buffer as ArrayBuffer;
+            
+            if (data.newBalance !== undefined && data.newBalance !== null) {
+                useAppStore.getState().updateUserCredits(data.newBalance);
+            }
 
-        } catch (e) {
-            if (apiKey) reportFailedApiKey(apiKey);
-            console.warn(`[Gemini TTS] Failed (attempt ${attempt + 1}):`, e);
-            if (attempt === MAX_RETRIES) return null;
-            // Wait before retrying (exponential backoff)
-            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+            return bytes.buffer as ArrayBuffer;
         }
+        return null;
+    } catch (e) {
+        console.warn("[Gemini TTS] Error calling edge function:", e);
+        return null;
     }
-    return null;
 };
 
 // 4. EXTRACTION VOCABULAIRE
