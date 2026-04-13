@@ -130,11 +130,75 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Sélection aléatoire d'une clé (Load Balancing / Rotation)
-    const selectedKey = keys[Math.floor(Math.random() * keys.length)]
-    const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+    // Fonction de rotation intelligente (Modèles + Clés)
+    async function fetchWithSmartRotation(endpoint: string, payload: any, availableKeys: string[], requestedModel: string) {
+        const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+        // Chaîne de fallback par défaut
+        const defaultChain = ['gemini-3-flash-preview', 'gemini-3.1-flash-preview', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+        const modelsToTry = [...new Set([requestedModel, ...defaultChain])];
+        
+        // Mélanger les clés pour équilibrer la charge
+        const shuffledKeys = [...availableKeys].sort(() => Math.random() - 0.5);
+        
+        let lastResponse: Response | null = null;
+        let lastErrorText = "";
 
-    const targetModel = model || 'gemini-2.5-flash'
+        for (const currentModel of modelsToTry) {
+            for (let i = 0; i < shuffledKeys.length; i++) {
+                const currentKey = shuffledKeys[i];
+                const separator = endpoint.includes('?') ? '&' : '?';
+                const fullUrl = `${BASE_URL}/${currentModel}:${endpoint}${separator}key=${currentKey}`;
+
+                try {
+                    const res = await fetch(fullUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (res.ok) {
+                        return res;
+                    }
+
+                    lastResponse = res;
+                    lastErrorText = await res.text();
+                    const status = res.status;
+
+                    console.warn(`[Smart Rotation] Model: ${currentModel}, KeyIndex: ${i}, Status: ${status}`);
+
+                    if (status === 429) {
+                        continue; // Quota dépassé, on essaie la clé suivante
+                    } else if (status === 400 && lastErrorText.includes("API key not valid")) {
+                        continue; // Clé invalide, on essaie la clé suivante
+                    } else if (status === 404 || status === 503) {
+                        break; // Modèle introuvable ou surchargé, on passe au modèle suivant
+                    } else {
+                        // Autres erreurs (ex: prompt invalide), on ne réessaie pas
+                        let errorJson;
+                        try { errorJson = JSON.parse(lastErrorText); } catch { /* ignore */ }
+                        const message = errorJson?.error?.message || lastErrorText;
+                        throw new Error(`Google API Error (${status}): ${message}`);
+                    }
+                } catch (e) {
+                    if (e instanceof Error && e.message.includes('Google API Error')) {
+                        throw e;
+                    }
+                    console.error(`[Smart Rotation] Fetch error:`, e);
+                }
+            }
+        }
+
+        if (lastResponse) {
+            let errorJson;
+            try { errorJson = JSON.parse(lastErrorText); } catch { /* ignore */ }
+            const message = errorJson?.error?.message || lastErrorText;
+            throw new Error(`Google API Error (${lastResponse.status}) after all retries: ${message}`);
+        }
+
+        throw new Error("Failed to fetch from Google API: All keys and models exhausted.");
+    }
+
+    const targetModel = model || 'gemini-3-flash-preview'
     const { systemInstruction, ...genConfig } = config || {}
 
     if (action === 'generate') {
@@ -144,13 +208,7 @@ Deno.serve(async (req) => {
       }
       if (systemInstruction) payload.systemInstruction = { parts: [{ text: systemInstruction }] }
 
-      const res = await fetch(`${BASE_URL}/${targetModel}:generateContent?key=${selectedKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-
-      if (!res.ok) throw new Error(await res.text())
+      const res = await fetchWithSmartRotation('generateContent', payload, keys, targetModel);
       const data = await res.json()
       return new Response(JSON.stringify({ text: data.candidates?.[0]?.content?.parts?.[0]?.text || "" }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -164,13 +222,7 @@ Deno.serve(async (req) => {
         }
         if (systemInstruction) payload.systemInstruction = { parts: [{ text: systemInstruction }] }
 
-        const res = await fetch(`${BASE_URL}/${targetModel}:streamGenerateContent?alt=sse&key=${selectedKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
-
-        if (!res.ok) throw new Error(await res.text())
+        const res = await fetchWithSmartRotation('streamGenerateContent?alt=sse', payload, keys, targetModel);
 
         const reader = res.body?.getReader()
         const encoder = new TextEncoder()
@@ -225,21 +277,8 @@ Deno.serve(async (req) => {
         }
         if (systemInstruction) payload.systemInstruction = { parts: [{ text: systemInstruction }] }
 
-        const res = await fetch(`${BASE_URL}/${targetModel}:generateContent?key=${selectedKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
-
-        if (!res.ok) {
-            const errorText = await res.text();
-            let errorJson;
-            try { errorJson = JSON.parse(errorText); } catch { /* ignore */ }
-            
-            console.error(`[Google API Error] ${res.status}:`, errorText);
-            const message = errorJson?.error?.message || errorText;
-            throw new Error(`Google API Error (${res.status}): ${message}`);
-        }
+        const res = await fetchWithSmartRotation('generateContent', payload, keys, targetModel);
+        
         const data = await res.json()
         const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}"
         try {
@@ -260,13 +299,8 @@ Deno.serve(async (req) => {
             generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' } } } }
         }
 
-        const res = await fetch(`${BASE_URL}/${model || 'gemini-2.5-flash'}:generateContent?key=${selectedKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
-
-        if (!res.ok) throw new Error(await res.text())
+        const res = await fetchWithSmartRotation('generateContent', payload, keys, targetModel);
+        
         const data = await res.json()
         return new Response(JSON.stringify({ audioBase64: data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data, newBalance }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
