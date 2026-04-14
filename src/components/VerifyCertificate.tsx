@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Certificate } from '../types';
+import { Certificate, UserProfile } from '../types';
 import { supabase } from '../lib/supabase';
-import { CheckCircle, XCircle, Loader2, Award, Calendar, User, Globe } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, Award, Calendar, User, Globe, FileText, Eye } from 'lucide-react';
+import CertificateView from '../modules/SmartExam/components/Certificate';
+import ExamResult from '../modules/SmartExam/components/ExamResult';
+import { ExamResultDetailed } from '../modules/SmartExam/types';
 
 interface Props {
     certId: string;
@@ -10,20 +13,24 @@ interface Props {
 
 const VerifyCertificate: React.FC<Props> = ({ certId, onClose }) => {
     const [cert, setCert] = useState<Certificate | null>(null);
+    const [examResult, setExamResult] = useState<ExamResultDetailed | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
+    const [viewMode, setViewMode] = useState<'verify' | 'certificate' | 'report'>('verify');
 
     useEffect(() => {
         const fetchCert = async () => {
             try {
                 const { data, error } = await supabase
                     .from('certificates')
-                    .select('*')
+                    .select('*, exam_results(*)')
                     .eq('id', certId.trim())
                     .single();
                 
                 if (data && !error) {
-                    setCert({
+                    const issueDate = data.issue_date || data.created_at;
+                    
+                    const certData: Certificate = {
                         id: data.id,
                         userId: data.user_id,
                         userName: data.user_name,
@@ -31,13 +38,37 @@ const VerifyCertificate: React.FC<Props> = ({ certId, onClose }) => {
                         language: data.language,
                         level: data.level,
                         score: data.score,
-                        issueDate: new Date(data.created_at).getTime(),
-                        examId: data.exam_id
-                    });
+                        globalScore: data.score,
+                        issueDate: new Date(issueDate).getTime(),
+                        examId: data.exam_id,
+                        status: data.status
+                    };
+
+                    setCert(certData);
+
+                    if (data.exam_results) {
+                        const er = data.exam_results;
+                        setExamResult({
+                            examId: er.id || '',
+                            userId: er.user_id || '',
+                            userName: data.user_name || 'Utilisateur',
+                            userFullName: data.user_full_name,
+                            language: er.language || data.language,
+                            date: new Date(er.created_at || Date.now()).getTime(),
+                            globalScore: er.score || 0,
+                            skillScores: er.skill_scores || { reading: 0, writing: 0, listening: 0, speaking: 0 },
+                            detectedLevel: er.detected_level || 'A1',
+                            passed: er.passed || false,
+                            feedback: er.feedback || '',
+                            confidenceScore: er.confidence_score || 0,
+                            certificateId: data.id
+                        });
+                    }
                 } else {
                     setError(true);
                 }
             } catch (e) {
+                console.error("Fetch cert error:", e);
                 setError(true);
             } finally {
                 setLoading(false);
@@ -70,6 +101,24 @@ const VerifyCertificate: React.FC<Props> = ({ certId, onClose }) => {
                 </button>
             </div>
         );
+    }
+
+    if (viewMode === 'certificate') {
+        return <CertificateView result={examResult!} onClose={() => setViewMode('verify')} />;
+    }
+
+    if (viewMode === 'report' && examResult && cert) {
+        // Mock user profile for ExamResult component
+        const mockUser: UserProfile = {
+            id: cert.userId,
+            username: cert.userName || 'Utilisateur',
+            role: 'user',
+            credits: 0,
+            preferences: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        };
+        return <ExamResult result={examResult} user={mockUser} onClose={() => setViewMode('verify')} initialShowCert={false} />;
     }
 
     return (
@@ -134,11 +183,17 @@ const VerifyCertificate: React.FC<Props> = ({ certId, onClose }) => {
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
-                            <button className="w-full py-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-bold rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-all">
-                                Voir Rapport
+                            <button 
+                                onClick={() => setViewMode('report')}
+                                className="w-full py-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-bold rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-all flex items-center justify-center gap-2"
+                            >
+                                <FileText className="w-4 h-4" /> Voir Rapport
                             </button>
-                            <button className="w-full py-3 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 font-bold rounded-xl hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-all">
-                                Voir Certificat
+                            <button 
+                                onClick={() => setViewMode('certificate')}
+                                className="w-full py-3 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 font-bold rounded-xl hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-all flex items-center justify-center gap-2"
+                            >
+                                <Eye className="w-4 h-4" /> Voir Certificat
                             </button>
                         </div>
 
