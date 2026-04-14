@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { ExamResultDetailed } from '../types';
-import { Award, Target, TrendingUp, AlertTriangle, Lock, Loader2 } from 'lucide-react';
+import { Award, Target, TrendingUp, AlertTriangle, Lock, Loader2, Check } from 'lucide-react';
 import CertificateView from './Certificate';
 import { useTranslation } from '../../../contexts/LanguageContext';
 import { unlockCertificate } from '../SmartExamService';
@@ -29,12 +29,18 @@ const ExamResult: React.FC<Props> = ({ result, user, onClose, initialShowCert = 
 
     const handleUnlock = async () => {
         if (isUnlocking) return;
+        
+        if (!showUnlockConfirm) {
+            setShowUnlockConfirm(true);
+            return;
+        }
+
         setIsUnlocking(true);
-        setShowUnlockConfirm(false);
         try {
             const newCertId = await unlockCertificate(result, user);
             if (newCertId) {
                 setCertId(newCertId);
+                setShowUnlockConfirm(false);
                 toast.success("Certificat débloqué avec succès !");
             } else {
                 toast.error("Échec du déblocage. Vérifiez vos crédits.");
@@ -163,20 +169,6 @@ const ExamResult: React.FC<Props> = ({ result, user, onClose, initialShowCert = 
                                     <Award className="w-6 h-6" /> {t('exam.download_certificate')}
                                 </button>
                             )}
-                            {result.passed && !certId && (
-                                <button 
-                                    onClick={() => setShowUnlockConfirm(true)} 
-                                    disabled={isUnlocking || user.credits < CREDIT_COSTS.CERTIFICATE_UNLOCK}
-                                    className={`flex-1 py-4 font-black rounded-2xl shadow-xl transition-all flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-95 ${user.credits >= CREDIT_COSTS.CERTIFICATE_UNLOCK ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-indigo-500/20' : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'}`}
-                                >
-                                    {isUnlocking ? (
-                                        <Loader2 className="w-6 h-6 animate-spin" />
-                                    ) : (
-                                        <Lock className="w-6 h-6" />
-                                    )}
-                                    {t('exam.unlock_certificate') || "Débloquer Certificat"} ({CREDIT_COSTS.CERTIFICATE_UNLOCK} CRD)
-                                </button>
-                            )}
                             <button onClick={onClose} className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95">
                                 {t('exam.back_home')}
                             </button>
@@ -184,37 +176,6 @@ const ExamResult: React.FC<Props> = ({ result, user, onClose, initialShowCert = 
                     </div>
                 </div>
             </div>
-
-            {/* Unlock Confirmation Modal */}
-            {showUnlockConfirm && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-                    <div className="bg-white dark:bg-slate-900 rounded-[2rem] p-8 max-w-sm w-full shadow-2xl border border-slate-200 dark:border-slate-800 animate-scale-in">
-                        <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                            <Lock className="w-8 h-8" />
-                        </div>
-                        <h3 className="text-xl font-black text-slate-900 dark:text-white text-center mb-2">
-                            Débloquer le Certificat ?
-                        </h3>
-                        <p className="text-slate-500 dark:text-slate-400 text-center mb-8 text-sm font-medium">
-                            Cette action consommera <span className="text-indigo-600 dark:text-indigo-400 font-bold">{CREDIT_COSTS.CERTIFICATE_UNLOCK} crédits</span>. Vous pourrez ensuite télécharger votre certificat à tout moment.
-                        </p>
-                        <div className="flex flex-col gap-3">
-                            <button 
-                                onClick={handleUnlock}
-                                className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95"
-                            >
-                                Confirmer le déblocage
-                            </button>
-                            <button 
-                                onClick={() => setShowUnlockConfirm(false)}
-                                className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
-                            >
-                                Annuler
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 };

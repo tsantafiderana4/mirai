@@ -14,7 +14,7 @@ let userListeners: UserUpdateListener[] = [];
 
 export type SyncStatus = 'synced' | 'syncing' | 'offline' | 'error';
 type SyncStatusListener = (status: SyncStatus) => void;
-let syncListeners: SyncStatusListener[] = [];
+const syncListeners: SyncStatusListener[] = [];
 
 let currentSyncStatus: SyncStatus = 'synced';
 
@@ -835,7 +835,7 @@ export const storageService = {
 
     // 1. Load Local (Instant)
     const localData = localStorage.getItem(key);
-    let localSession: LearningSession | null = localData ? JSON.parse(localData) : null;
+    const localSession: LearningSession | null = localData ? JSON.parse(localData) : null;
 
     // 2. Background Sync with Supabase (Non-blocking)
     if (isSupabaseConfigured()) {

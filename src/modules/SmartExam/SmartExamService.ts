@@ -1,68 +1,112 @@
 
 import { UserProfile } from "../../types";
 import { SmartExam, ExamResultDetailed, ExamType } from "./types";
-import { TEXT_MODEL, generateText } from "../../services/geminiService"; // Use generateText or expose callGeminiFunction if needed, but better to use existing services or refactor
+import { TEXT_MODEL, getGeminiApiKey, reportFailedApiKey } from "../../services/geminiService";
 import { CREDIT_COSTS, deductCredits } from "../../services/creditService";
-import { supabase, supabaseUrl, supabaseAnonKey } from "../../lib/supabase"; // Import supabase to call edge function directly if needed, or better, add a helper in geminiService
+import { supabase, supabaseUrl, supabaseAnonKey } from "../../lib/supabase";
 import { useAppStore } from "../../store/useAppStore";
+import { GoogleGenAI } from "@google/genai";
 
 // Helper to call edge function directly for specific schemas not covered by geminiService generic methods
 const callGeminiFunction = async (action: string, payload: Record<string, unknown>) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token;
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
 
-    if (!token) {
-        throw new Error("Session expirée ou non autorisée. Veuillez vous reconnecter.");
-    }
+        if (!token) {
+            throw new Error("Session expirée ou non autorisée. Veuillez vous reconnecter.");
+        }
 
-    const response = await fetch(`${supabaseUrl}/functions/v1/gemini-api`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-            'apikey': supabaseAnonKey
-        },
-        body: JSON.stringify({ action, ...payload })
-    });
+        const response = await fetch(`${supabaseUrl}/functions/v1/gemini-api`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'apikey': supabaseAnonKey
+            },
+            body: JSON.stringify({ action, ...payload })
+        });
 
-    if (!response.ok) {
+        if (response.ok) {
+            const data = await response.json();
+            if (data.newBalance !== undefined && data.newBalance !== null) {
+                useAppStore.getState().updateUserCredits(data.newBalance);
+            }
+            return data;
+        }
+
+        // Handle specific errors from Edge Function
         let errorData;
         try {
             errorData = await response.json();
-        } catch (e) {
+        } catch {
             const text = await response.text();
             throw new Error(`Erreur serveur IA (Code: ${response.status}). ${text}`);
         }
 
         console.error(`[Gemini Function] Error calling ${action}:`, errorData);
         
-        let errorMessage = errorData.error || errorData.message || "Erreur de communication avec l'IA";
-        
-        if (errorData.details) {
-            errorMessage += ` (${errorData.details})`;
+        if (response.status === 402) {
+            throw new Error(`Crédits insuffisants: ${errorData.error || errorData.message}`);
         }
         
         if (response.status === 401) {
-            errorMessage = "Session expirée ou non autorisée. Veuillez vous reconnecter.";
-        } else if (response.status === 402) {
-            errorMessage = `Erreur de facturation: ${errorMessage}`;
+            throw new Error("Session expirée ou non autorisée. Veuillez vous reconnecter.");
+        }
+
+        throw new Error(errorData.error || errorData.message || `Erreur serveur IA (${response.status})`);
+
+    } catch (e: any) {
+        // If it's a credit error or auth error, don't fallback, just rethrow
+        if (e.message.includes("Crédits insuffisants") || e.message.includes("Session expirée")) {
+            throw e;
+        }
+
+        console.warn(`[Gemini Function] Edge function failed (${e.message}), falling back to direct SDK...`);
+        
+        // FALLBACK: Direct SDK Call
+        if (action === 'generate_json' || action === 'generate_exam') {
+            let apiKey = '';
+            try {
+                apiKey = await getGeminiApiKey();
+                const ai = new GoogleGenAI({ apiKey });
+                
+                const model = (payload.model as string) || TEXT_MODEL;
+                const contents = payload.contents;
+                const config = (payload.config as any) || {};
+                
+                // Format contents for SDK
+                const formattedContents = typeof contents === 'string' 
+                    ? [{ role: 'user', parts: [{ text: contents }] }] 
+                    : contents;
+
+                const result = await ai.models.generateContent({
+                    model: model,
+                    contents: formattedContents as any,
+                    config: {
+                        ...config,
+                        responseMimeType: 'application/json',
+                    }
+                });
+
+                const rawText = result.text || "{}";
+                const cleanText = rawText.replace(/```json\n?|```/g, '').trim();
+                return { json: JSON.parse(cleanText) };
+
+            } catch (sdkError: any) {
+                if (apiKey) reportFailedApiKey(apiKey);
+                console.error("[Gemini SDK Fallback Error]", sdkError);
+                throw new Error(`Erreur IA (Fallback): ${sdkError.message}`);
+            }
         }
         
-        throw new Error(errorMessage);
+        throw e;
     }
-
-    const data = await response.json();
-
-    if (data.newBalance !== undefined && data.newBalance !== null) {
-        useAppStore.getState().updateUserCredits(data.newBalance);
-    }
-
-    return data;
 };
 
 export const SmartExamService = {
     
-    async checkBalance(userId: string, type: ExamType): Promise<boolean> {
+    async checkBalance(): Promise<boolean> {
         // We don't have the user object here, just the ID. 
         // We should fetch the user or rely on the caller to check credits.
         // For now, we'll return true and let the caller or backend handle it.
@@ -108,37 +152,42 @@ export const SmartExamService = {
             // 2. Generate Exam
             const prompt = `
             Génère un examen de certification de type "${type}" pour l'étudiant "${user.username}" (Langue cible : "${lang}").
-            L'examen doit être extrêmement rigoureux, professionnel et réaliste.
             
-            CONTEXTE & IMMERSION :
-            - Utilise des scénarios du monde réel (vie professionnelle, voyages d'affaires, situations sociales complexes).
-            - Les questions doivent tester non seulement la langue, mais aussi la capacité à comprendre les nuances et le contexte.
-            - Pour le niveau "${level}", assure-toi que le vocabulaire est précis et que les structures grammaticales sont celles attendues à ce niveau CEFR.
+            OBJECTIF : Créer un examen immersif, réaliste et professionnel, similaire au DELF/DALF ou IELTS.
             
-            CIBLAGE PÉDAGOGIQUE :
-            - Difficultés récentes de l'étudiant à intégrer : ${difficulties}.
+            CONTEXTE ET SCÉNARIOS :
+            - Utilise des situations de la vie réelle (travail, voyage, vie sociale, études).
+            - Les questions doivent être contextualisées (ex: "Vous êtes à la réception d'un hôtel...", "Votre collègue vous demande...").
+            - Adapte strictement le vocabulaire et la complexité au niveau "${level}".
             
-            IMPORTANT : 
-            - L'examen doit être STRICTEMENT adapté au niveau cible "${level}".
-            - Les instructions des questions (le champ "question") doivent être rédigées en "${explanationLang}".
-            - Ne PAS inclure de questions d'un niveau supérieur.
-            La difficulté doit être progressive AU SEIN du niveau ${level} :
-            - Questions 1 à 5 : Facile (Bases du niveau ${level})
-            - Questions 6 à 10 : Moyen (Application standard du niveau ${level})
-            - Questions 11 à 15 : Difficile (Nuances et complexité du niveau ${level})
-            - Questions 16 à 20 : Expert (Maîtrise totale du niveau ${level})
+            STRUCTURE DE L'EXAMEN (20 questions au total) :
+            1. COMPRÉHENSION ORALE (5 questions) :
+               - Fournis un script court et naturel dans 'context'.
+               - La question doit porter sur un détail ou l'intention globale.
+            2. COMPRÉHENSION ÉCRITE & GRAMMAIRE (5 questions) :
+               - Mélange de QCM, Vrai/Faux et phrases à trous.
+               - Utilise des textes courts (emails, annonces, articles).
+            3. EXPRESSION ÉCRITE (5 questions) :
+               - Demande de rédiger des réponses courtes (A1/A2) ou des argumentations (B2/C1).
+               - Scénarios : Répondre à une invitation, écrire un email professionnel, donner son avis.
+            4. EXPRESSION ORALE / MISE EN SITUATION (5 questions) :
+               - Décris une situation où l'élève doit parler.
+               - Ex: "Expliquez à votre ami pourquoi vous aimez ce livre."
             
-            Structure requise (JSON) : 20 questions au total.
-            - 5 questions de Compréhension Orale (Listening) - Fournir un script immersif et naturel dans 'context'.
-            - 5 questions de Compréhension Écrite/Grammaire (QCM) - Scénarios réalistes, pas de phrases isolées sans contexte.
-            - 5 questions d'Expression Écrite (Writing) - Tâches professionnelles (emails, rapports courts, messages formels).
-            - 5 questions d'Expression Orale (Speaking) - Jeux de rôle et mises en situation interactives.
+            DIFFICULTÉ PROGRESSIVE AU SEIN DU NIVEAU ${level} :
+            - Q1-5: Facile | Q6-10: Moyen | Q11-15: Difficile | Q16-20: Expert (limite du niveau).
+            
+            LANGUE :
+            - Les questions (le contenu de l'examen, les textes de compréhension, les options) DOIVENT être intégralement en langue cible : "${lang}".
+            - Les instructions, les contextes de mise en situation, et les explications DOIVENT être en langue d'explication : "${explanationLang}".
+            
+            Difficultés cibles de l'élève : ${difficulties}.
             
             Output JSON Schema:
             {
                 "sections": [
-                    { "id": "l1", "type": "listening", "question": "...", "context": "...", "options": ["A", "B", "C", "D"], "weight": 2 },
-                    { "id": "q1", "type": "qcm", "question": "...", "options": ["A", "B", "C", "D"], "weight": 1 },
+                    { "id": "l1", "type": "listening", "question": "...", "context": "Texte à lire par l'IA...", "options": ["...", "..."], "weight": 2 },
+                    { "id": "q1", "type": "qcm", "question": "...", "options": ["...", "..."], "weight": 1 },
                     { "id": "w1", "type": "writing", "question": "...", "weight": 3 },
                     { "id": "s1", "type": "speaking", "question": "...", "weight": 3 }
                 ]
@@ -212,16 +261,15 @@ export const SmartExamService = {
         ${exam.sections.map(s => `[${s.type.toUpperCase()}] Q: ${s.question} \n R: ${answers[s.id] ? answers[s.id] : "AUCUNE RÉPONSE (Temps écoulé ou ignoré)"}`).join('\n\n')}
         
         Tâche :
-        1. Analyse la grammaire, le vocabulaire, la cohérence de manière extrêmement rigoureuse.
+        1. Analyse la grammaire, le vocabulaire, la cohérence de manière très stricte et professionnelle.
         2. Estime le niveau RÉEL (CEFR) basé sur la performance globale.
-           - IMPORTANT : Si le score est inférieur à 70/100, l'étudiant est considéré comme NON ADMIS pour le niveau ${exam.targetLevel}.
-           - Le niveau détecté doit refléter la réalité : si les fautes sont nombreuses, n'hésite pas à descendre d'un cran.
+           - IMPORTANT : Si le score est inférieur à 70/100, le niveau détecté NE PEUT PAS être supérieur au niveau visé (${exam.targetLevel}). Il doit être "Inférieur à ${exam.targetLevel}" ou le niveau en dessous.
+           - Si le score est élevé (> 80), tu peux estimer un niveau supérieur si le vocabulaire le justifie.
         3. Calcule un score sur 100 (sois exigeant, les fautes de base pénalisent lourdement).
-           - Seuil de réussite : 70/100.
            - Si "AUCUNE RÉPONSE", comptez 0 pour cette question.
         4. Donne un feedback constructif et professionnel en "${explanationLang}". 
-           - Si l'étudiant réussit (>= 70), félicite-le chaleureusement et mentionne qu'il peut débloquer son certificat.
-           - Si l'étudiant échoue (< 70), explique-lui précisément pourquoi, sans détour mais avec empathie, et donne-lui un plan d'action concret.
+           - Si l'étudiant réussit (>= 70), félicite-le de manière formelle.
+           - Si l'étudiant échoue (< 70), explique-lui clairement pourquoi il n'est pas admis (score insuffisant) et donne-lui des recommandations précises.
            - RECOMMANDATIONS CIBLÉES :
              * Si la grammaire/vocabulaire est faible : Recommande de "renforcer les bases via le Chat interactif".
              * Si l'expression orale/écoute est faible : Recommande de "pratiquer l'oral via l'Appel Vocal (TeacherMada Live)".
@@ -261,7 +309,7 @@ export const SmartExamService = {
             });
 
             const evalData = data.json || {};
-            const passed = (evalData.globalScore || 0) >= 70; // Seuil strict
+            const passed = (evalData.globalScore || 0) >= 70; // Seuil strict de 70%
 
             // NOTE: Certificate is NOT created automatically anymore.
             // User must pay 100 credits to unlock it if passed.
@@ -275,7 +323,7 @@ export const SmartExamService = {
                         user_id: user.id,
                         type: 'achievement',
                         title: 'Examen Réussi !',
-                        message: `Félicitations ! Vous avez réussi l'examen ${exam.targetLevel}. Vous pouvez maintenant débloquer votre certificat.`,
+                        message: `Félicitations ! Vous avez réussi l'examen ${exam.targetLevel} avec un score de ${evalData.globalScore}/100. Vous pouvez maintenant débloquer votre certificat dans votre tableau de bord.`,
                         data: { examId: exam.id }
                     }]);
                 } catch (e) {
@@ -289,7 +337,7 @@ export const SmartExamService = {
                          user_id: user.id,
                          type: 'system',
                          title: 'Résultat Examen',
-                         message: `Examen terminé. Score: ${evalData.globalScore}/100. Courage, continuez vos efforts !`,
+                         message: `Examen terminé. Score: ${evalData.globalScore}/100. Malheureusement, le seuil de réussite est de 70/100. Continuez vos efforts !`,
                          data: { examId: exam.id }
                      }]);
                  } catch (e) {
@@ -301,7 +349,7 @@ export const SmartExamService = {
                 examId: exam.id,
                 userId: user.id,
                 userName: user.username,
-                userFullName: user.username, // Use full name
+                userFullName: user.username, 
                 language: exam.language,
                 date: Date.now(),
                 globalScore: evalData.globalScore || 0,
@@ -315,18 +363,23 @@ export const SmartExamService = {
 
             // SAVE EXAM RESULT TO HISTORY (Passed or Failed)
             try {
-                await supabase.from('exam_results').insert([{
-                    id: exam.id,
+                const payload = {
+                    id: crypto.randomUUID(),
                     user_id: user.id,
                     language: exam.language,
                     level: exam.targetLevel,
                     score: resultDetailed.globalScore,
                     total_questions: exam.totalQuestions,
                     passed: resultDetailed.passed,
-                    details: resultDetailed
-                }]);
+                    details: resultDetailed,
+                    created_at: new Date().toISOString()
+                };
+                console.log("Saving exam result payload:", payload);
+                const { error } = await supabase.from('exam_results').insert([payload]);
+                if (error) throw error;
+                console.log("Exam result saved successfully");
             } catch (e) {
-                console.error("Error saving exam result", e);
+                console.error("Error saving exam result:", e);
             }
 
             return resultDetailed;
@@ -335,6 +388,10 @@ export const SmartExamService = {
             console.error("Eval Error", e);
             throw new Error("Erreur lors de la correction.");
         }
+    },
+
+    async unlockCertificate(result: ExamResultDetailed, user: UserProfile): Promise<string | null> {
+        return unlockCertificate(result, user);
     }
 };
 
@@ -342,7 +399,7 @@ export const SmartExamService = {
  * Unlocks a certificate for a passed exam
  */
 export const unlockCertificate = async (result: ExamResultDetailed, user: UserProfile): Promise<string | null> => {
-    if (!result.passed) return null;
+    if (!result.passed || (result.globalScore || 0) < 70) return null;
     
     try {
         // 1. Deduct credits
@@ -351,21 +408,37 @@ export const unlockCertificate = async (result: ExamResultDetailed, user: UserPr
         useAppStore.getState().updateUserCredits(newCredits);
 
         // 2. Create Cert ID
-        const certId = `CERT-${Date.now().toString(36).toUpperCase()}-${user.id.slice(0,4).toUpperCase()}`;
+        // (No longer needed, using existing certId from database)
 
-        // 3. Save to certificates table
-        const { error: certError } = await supabase.from('certificates').insert([{
-            id: certId,
-            user_id: user.id,
-            user_name: user.username,
-            user_full_name: user.username,
-            language: result.language || "Inconnu",
-            level: result.detectedLevel,
-            score: result.globalScore,
-            type: 'certification'
-        }]);
+        // 3. Update existing certificate record
+        console.log("Searching for certificate with exam_id:", result.examId);
+        const { data: existingCert, error: fetchError } = await supabase
+            .from('certificates')
+            .select('id, status')
+            .eq('exam_id', result.examId)
+            .single();
 
-        if (certError) throw certError;
+        console.log("Found certificate:", existingCert, "Error:", fetchError);
+
+        if (fetchError || !existingCert) {
+            throw new Error(`Certificat non trouvé pour exam_id: ${result.examId}`);
+        }
+
+        console.log("Updating certificate status to 'débloqué' for exam_id:", result.examId);
+        const { data: updateData, error: certError } = await supabase.from('certificates')
+            .update({
+                status: 'débloqué',
+                qr_code_data: `${window.location.origin}/verify/${existingCert.id}`
+            })
+            .eq('exam_id', result.examId)
+            .select();
+
+        if (certError) {
+            console.error("Update error:", certError);
+            throw certError;
+        }
+        console.log("Certificate updated successfully, result:", updateData);
+        const certId = existingCert.id;
 
         // 4. Update exam_results with certificate_id
         await supabase.from('exam_results')
@@ -382,6 +455,10 @@ export const unlockCertificate = async (result: ExamResultDetailed, user: UserPr
             data: { certificateId: certId }
         }]);
 
+        // Force a reload of the certificates by triggering a state update if possible, 
+        // or just rely on the user refreshing the page for now.
+        // The issue is that SmartExamService is not a React component, so we cannot use hooks directly.
+        
         return certId;
     } catch (e) {
         console.error("Error unlocking certificate:", e);

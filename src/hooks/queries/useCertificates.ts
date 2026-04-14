@@ -22,8 +22,11 @@ export const useCertificates = (userId: string | undefined) => {
                 examId: c.exam_id,
                 language: c.language,
                 level: c.level,
-                issueDate: c.issue_date,
-                certificateUrl: c.certificate_url
+                issueDate: new Date(c.issue_date).getTime(),
+                certificateUrl: c.certificate_url,
+                globalScore: c.score,
+                skillScores: c.skill_scores,
+                status: c.status || 'bloqué'
             })) as Certificate[];
         },
         enabled: !!userId,
@@ -63,10 +66,22 @@ export const useCertificates = (userId: string | undefined) => {
         }
     });
 
+    const unlockMutation = useMutation({
+        mutationFn: async (examId: string) => {
+            // This is a placeholder as the actual unlocking logic is in SmartExamService
+            // We just need to invalidate the query after the service call
+            return;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['certificates', userId] });
+        }
+    });
+
     return {
         certificates: query.data || [],
         isLoading: query.isLoading,
         error: query.error,
-        addCertificate: insertMutation.mutateAsync
+        addCertificate: insertMutation.mutateAsync,
+        unlockCertificate: unlockMutation.mutateAsync
     };
 };

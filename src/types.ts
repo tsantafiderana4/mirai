@@ -171,6 +171,7 @@ export interface Certificate {
   score?: number;
   globalScore?: number;
   certificateUrl?: string;
+  status?: 'bloqué' | 'débloqué';
   skillScores?: {
       reading: number;
       writing: number;

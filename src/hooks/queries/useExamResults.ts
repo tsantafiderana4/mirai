@@ -16,14 +16,24 @@ export const useExamResults = (userId: string | undefined) => {
                 .order('created_at', { ascending: false });
 
             if (error) throw error;
-            return data.map((e: any) => ({
+            return (data || []).map((e: {
+                id: string;
+                user_id: string;
+                language: string;
+                level: string;
+                score: number;
+                total_questions: number;
+                passed: boolean;
+                created_at: string;
+                details: any;
+            }) => ({
                 id: e.id,
                 userId: e.user_id,
                 language: e.language,
                 level: e.level,
                 score: e.score,
                 totalQuestions: e.total_questions,
-                passed: e.score >= 70,
+                passed: e.passed,
                 date: new Date(e.created_at).getTime(),
                 details: e.details
             })) as ExamResult[];
@@ -41,6 +51,7 @@ export const useExamResults = (userId: string | undefined) => {
                 total_questions: examResult.totalQuestions,
                 language: examResult.language,
                 level: examResult.level,
+                passed: examResult.passed,
                 details: examResult.details,
                 created_at: examResult.date || new Date().toISOString()
             };
@@ -58,7 +69,7 @@ export const useExamResults = (userId: string | undefined) => {
                 level: data.level,
                 score: data.score,
                 totalQuestions: data.total_questions,
-                passed: data.score >= 70,
+                passed: data.passed,
                 date: new Date(data.created_at).getTime(),
                 details: data.details
             } as ExamResult;

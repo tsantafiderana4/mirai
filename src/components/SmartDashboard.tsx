@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
-import { UserProfile, SmartNotification, VoiceName } from '../types';
-import { X, Sun, Moon, Book, Trophy, Loader2, Globe, Download, ShieldCheck, Upload, CreditCard, Plus, AlertTriangle, MessageCircle, Phone, Brain, ArrowRight, Award, ChevronRight, User, Bell, Check, Trash2, Info, CheckCircle, XCircle, BarChart3, Lock as LockIcon, Save as SaveIcon, LogOut as LogOutIcon } from 'lucide-react';
+import { UserProfile, SmartNotification, VoiceName, Certificate, LearningSession, UserPreferences } from '../types';
+import { X, LogOut, Sun, Moon, Book, Trophy, Loader2, Save, Globe, Download, ShieldCheck, Upload, CreditCard, Plus, AlertTriangle, MessageCircle, Phone, Brain, ArrowRight, Award, ChevronRight, User, Bell, Check, Trash2, Info, CheckCircle, XCircle, BarChart3, Lock } from 'lucide-react';
 import { useCertificates } from '../hooks/queries/useCertificates';
 import { useExamResults } from '../hooks/queries/useExamResults';
 import { useNotifications } from '../hooks/queries/useNotifications';
@@ -11,11 +11,12 @@ import { useSessionHistory } from '../hooks/queries/useSessionHistory';
 import { toast } from './Toaster';
 import ExamResultView from '../modules/SmartExam/components/ExamResult';
 import { ExamResultDetailed } from '../modules/SmartExam/types';
+import { unlockCertificate } from '../modules/SmartExam/SmartExamService';
+import { CREDIT_COSTS } from '../services/creditService';
 import { useTranslation } from '../contexts/LanguageContext';
 import { useAppStore } from '../store/useAppStore';
 import { supabase } from '../lib/supabase';
 import MarkdownRenderer from './MarkdownRenderer';
-import { LearningSession } from '../types';
 
 interface Props {
   onClose: () => void;
@@ -25,6 +26,11 @@ interface Props {
   onStartExercise: () => void;
   onStartVoice: () => void;
   onStartExam: () => void;
+}
+
+interface EnrichedCertificate extends Certificate {
+    isLocked?: boolean;
+    feedback?: string;
 }
 
 const SmartDashboard: React.FC<Props> = ({ 
@@ -48,6 +54,8 @@ const SmartDashboard: React.FC<Props> = ({
   const [selectedResult, setSelectedResult] = useState<ExamResultDetailed | null>(null);
   const [startWithCert, setStartWithCert] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [certToUnlock, setCertToUnlock] = useState<ExamResultDetailed | null>(null);
+  const [isUnlocking, setIsUnlocking] = useState(false);
   const [editName, setEditName] = useState(user?.username || '');
   const [editEmail, setEditEmail] = useState(user?.email || '');
   const [editPassword, setEditPassword] = useState('');
@@ -61,9 +69,14 @@ const SmartDashboard: React.FC<Props> = ({
   const displayCertificates = useMemo(() => {
     if (!user) return [];
     // 1. Enrich existing certificates with exam details if missing
-    const enrichedCertificates = certificates.map((cert: any) => {
+    const enrichedCertificates: EnrichedCertificate[] = certificates
+    .filter((cert) => {
+        const score = cert.globalScore || cert.score || 0;
+        return score >= 70;
+    })
+    .map((cert) => {
         // Find matching exam result
-        const exam = examResults.find((e: any) => e.id === cert.examId);
+        const exam = examResults.find((e) => e.id === cert.examId);
         const details = exam?.details;
         
         return {
@@ -76,24 +89,24 @@ const SmartDashboard: React.FC<Props> = ({
                 speaking: cert.globalScore || cert.score || 0 
             },
             // Use existing feedback if present, otherwise try to get from exam details
-            feedback: cert.feedback || details?.feedback || t('exam.passed'),
+            feedback: (cert as EnrichedCertificate).feedback || details?.feedback || t('exam.passed'),
             // Ensure globalScore is consistent
-            globalScore: cert.globalScore || cert.score || details?.globalScore || 0
+            globalScore: cert.globalScore || cert.score || details?.globalScore || 0,
+            isLocked: cert.status === 'bloqué'
         };
     });
 
-    const combined = [...enrichedCertificates];
+    const combined: EnrichedCertificate[] = [...enrichedCertificates];
     
-    // 2. Add passed exams that don't have a certificate yet (Locked certificates)
-    const passedExams = examResults.filter((exam: any) => 
+    // 2. Add passed exams that don't have a certificate yet
+    const passedExams = examResults.filter((exam) => 
         exam.passed && 
-        (exam.score >= 70 || (exam.details?.globalScore || 0) >= 70) &&
-        !certificates.some((cert: any) => cert.examId === exam.id)
+        !certificates.some((cert) => cert.examId === exam.id)
     );
 
-    passedExams.forEach((exam: any) => {
+    passedExams.forEach((exam) => {
         const details = exam.details || {};
-        const score = exam.score || exam.globalScore || 0;
+        const score = exam.score || (exam as Record<string, any>).globalScore || 0;
         
         combined.push({
             id: `temp-${exam.id}`,
@@ -106,10 +119,10 @@ const SmartDashboard: React.FC<Props> = ({
             globalScore: score,
             // Access skillScores from details
             skillScores: details.skillScores || { reading: score, writing: score, listening: score, speaking: score },
-            level: exam.level || exam.detectedLevel,
+            level: exam.level || (exam as Record<string, any>).detectedLevel,
             // Access feedback from details
             feedback: details.feedback || t('exam.passed'),
-            isGenerated: false 
+            isLocked: true // Clearly mark as locked
         });
     });
 
@@ -127,15 +140,15 @@ const SmartDashboard: React.FC<Props> = ({
               ...(user.preferences || {}),
               teacherName: editTeacherName.trim() || 'TeacherMada',
               voiceName: editVoiceName
-          } as any
+          } as UserPreferences
       };
       await updateProfile(updated);
       
       if (editEmail !== user.email) {
-          await supabase.auth.updateUser({ email: editEmail });
+          await supabase.auth.updateUser({ email: editEmail }).catch(() => {});
       }
       if (editPassword) {
-          await supabase.auth.updateUser({ password: editPassword });
+          await supabase.auth.updateUser({ password: editPassword }).catch(() => {});
       }
       
       setUser(updated);
@@ -240,6 +253,35 @@ const SmartDashboard: React.FC<Props> = ({
       toast.success(t('dashboard.conv_deleted'));
       onClose();
       window.location.reload(); 
+  };
+
+  const handleConfirmUnlock = async () => {
+    if (!certToUnlock || !user || isUnlocking) return;
+    
+    if (user.credits < CREDIT_COSTS.CERTIFICATE_UNLOCK) {
+        toast.error(t('chat.buy_credits'));
+        onShowPayment();
+        setCertToUnlock(null);
+        return;
+    }
+
+    setIsUnlocking(true);
+    try {
+        const certId = await unlockCertificate(certToUnlock, user);
+        if (certId) {
+            toast.success(t('common.success'));
+            // Force a refresh to update the dashboard state
+            window.location.reload();
+            setCertToUnlock(null);
+        } else {
+            toast.error(t('common.error'));
+        }
+    } catch (e) {
+        console.error("Unlock error", e);
+        toast.error(t('common.error'));
+    } finally {
+        setIsUnlocking(false);
+    }
   };
 
   if (!user) return null;
@@ -646,65 +688,64 @@ const SmartDashboard: React.FC<Props> = ({
                                 </div>
                             )}
 
-                            {displayCertificates.map((cert) => (
+                            {displayCertificates.map((cert: EnrichedCertificate) => (
                                 <div key={cert.id} className="group relative perspective-1000 cursor-pointer"
                                     onClick={() => {
-                                        const isTemp = cert.id.toString().startsWith('temp-');
                                         const resultDetails: ExamResultDetailed = {
                                             examId: cert.examId || '',
                                             userId: cert.userId,
-                                            userName: cert.userName,
+                                            userName: cert.userName || user.username,
                                             userFullName: cert.userFullName || user.username,
                                             language: cert.language,
                                             date: cert.issueDate,
-                                            globalScore: cert.globalScore,
-                                            skillScores: cert.skillScores,
+                                            globalScore: cert.globalScore || 0,
+                                            skillScores: cert.skillScores || { reading: 0, writing: 0, listening: 0, speaking: 0 },
                                             detectedLevel: cert.level,
                                             passed: true,
-                                            certificateId: isTemp ? null : cert.id,
-                                            feedback: cert.feedback,
+                                            certificateId: cert.isLocked ? undefined : cert.id,
+                                            feedback: cert.feedback || '',
                                             confidenceScore: 100
                                         };
-                                        setSelectedResult(resultDetails);
-                                        setStartWithCert(!isTemp); // Only start with cert if it's NOT a temp/locked one
+                                        
+                                        if (cert.isLocked) {
+                                            setCertToUnlock(resultDetails);
+                                        } else {
+                                            setSelectedResult(resultDetails);
+                                            setStartWithCert(true);
+                                        }
                                     }}
                                 >
-                                    <div className="absolute inset-0 bg-indigo-500 rounded-2xl transform translate-y-2 translate-x-2 opacity-0 group-hover:opacity-100 transition-all duration-300"></div>
-                                    <div className="relative bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden transform transition-transform duration-300 group-hover:-translate-y-1 group-hover:-translate-x-1">
+                                    <div className={`absolute inset-0 rounded-2xl transform translate-y-2 translate-x-2 opacity-0 group-hover:opacity-100 transition-all duration-300 ${cert.isLocked ? 'bg-slate-400' : 'bg-indigo-500'}`}></div>
+                                    <div className={`relative bg-white dark:bg-slate-800 rounded-2xl border shadow-xl overflow-hidden transform transition-transform duration-300 group-hover:-translate-y-1 group-hover:-translate-x-1 ${cert.isLocked ? 'border-slate-200 dark:border-slate-800 grayscale-[0.5]' : 'border-slate-200 dark:border-slate-700'}`}>
                                         {/* Certificate Header Pattern */}
-                                        <div className="h-24 bg-[#1b365d] relative overflow-hidden">
+                                        <div className={`h-24 relative overflow-hidden ${cert.isLocked ? 'bg-slate-700' : 'bg-[#1b365d]'}`}>
                                             <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white via-transparent to-transparent"></div>
                                             <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-white dark:from-slate-800 to-transparent"></div>
                                             <div className="absolute top-4 right-4">
-                                                <Award className="w-8 h-8 text-yellow-400 drop-shadow-md" />
+                                                {cert.isLocked ? <Lock className="w-8 h-8 text-slate-400 drop-shadow-md" /> : <Award className="w-8 h-8 text-yellow-400 drop-shadow-md" />}
                                             </div>
                                         </div>
 
                                         <div className="p-6 pt-0 relative">
-                                            <div className="w-16 h-16 rounded-xl bg-white dark:bg-slate-700 shadow-lg -mt-8 mb-4 flex items-center justify-center border-4 border-white dark:border-slate-800 relative">
-                                                <div className="text-2xl font-black text-[#1b365d] dark:text-white">
+                                            <div className="w-16 h-16 rounded-xl bg-white dark:bg-slate-700 shadow-lg -mt-8 mb-4 flex items-center justify-center border-4 border-white dark:border-slate-800">
+                                                <div className={`text-2xl font-black ${cert.isLocked ? 'text-slate-400' : 'text-[#1b365d] dark:text-white'}`}>
                                                     {cert.level?.substring(0, 2)}
                                                 </div>
-                                                {cert.id.toString().startsWith('temp-') && (
-                                                    <div className="absolute -top-2 -right-2 bg-amber-500 text-white p-1 rounded-full shadow-lg">
-                                                        <LockIcon className="w-3 h-3" />
-                                                    </div>
-                                                )}
                                             </div>
 
-                                            <h4 className="text-lg font-black text-slate-900 dark:text-white mb-1">
+                                            <h4 className={`text-lg font-black mb-1 ${cert.isLocked ? 'text-slate-500' : 'text-slate-900 dark:text-white'}`}>
                                                 {cert.language}
                                             </h4>
                                             <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-4">
-                                                {cert.id.toString().startsWith('temp-') ? (t('exam.cert_locked') || "Certificat disponible (Verrouillé)") : (t('dashboard.cert_success') || "Certificat obtenu")}
+                                                {cert.isLocked ? "Certificat Verrouillé" : t('dashboard.cert_success')}
                                             </p>
 
                                             <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-700">
                                                 <div className="text-xs text-slate-400">
-                                                    {t('dashboard.obtained_on')} {new Date(cert.issueDate).toLocaleDateString()}
+                                                    {cert.isLocked ? "Réussi le" : t('dashboard.obtained_on')} {new Date(cert.issueDate).toLocaleDateString()}
                                                 </div>
-                                                <div className="flex items-center gap-1 text-xs font-bold text-indigo-600 dark:text-indigo-400 group-hover:underline">
-                                                    {t('dashboard.see')} <ChevronRight className="w-3 h-3" />
+                                                <div className={`flex items-center gap-1 text-xs font-bold group-hover:underline ${cert.isLocked ? 'text-slate-500' : 'text-indigo-600 dark:text-indigo-400'}`}>
+                                                    {cert.isLocked ? "Débloquer" : t('dashboard.see')} <ChevronRight className="w-3 h-3" />
                                                 </div>
                                             </div>
                                         </div>
@@ -957,7 +998,7 @@ const SmartDashboard: React.FC<Props> = ({
                             </select>
                         </div>
                         <button onClick={handleSaveProfile} className="w-full py-4 bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold rounded-2xl flex items-center justify-center gap-2 shadow-lg hover:scale-[1.02] transition-transform">
-                            <SaveIcon className="w-5 h-5"/> {t('dashboard.save_changes')}
+                            <Save className="w-5 h-5"/> {t('dashboard.save_changes')}
                         </button>
                     </div>
                 </div>
@@ -970,7 +1011,7 @@ const SmartDashboard: React.FC<Props> = ({
                 onClick={() => { logout(); onClose(); }}
                 className="w-full py-3 bg-red-50 dark:bg-red-900/10 text-red-500 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors text-sm"
             >
-                <LogOutIcon className="w-4 h-4" /> {t('dashboard.logout')}
+                <LogOut className="w-4 h-4" /> {t('dashboard.logout')}
             </button>
         </div>
       </div>
@@ -978,6 +1019,44 @@ const SmartDashboard: React.FC<Props> = ({
       {/* Exam Result Modal */}
       {selectedResult && (
           <ExamResultView result={selectedResult} user={user} onClose={() => setSelectedResult(null)} initialShowCert={startWithCert} />
+      )}
+
+      {/* Unlock Confirmation Modal */}
+      {certToUnlock && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-fade-in">
+              <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-200 dark:border-slate-800 animate-scale-in">
+                  <div className="p-8 text-center">
+                      <div className="w-20 h-20 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center mx-auto mb-6">
+                          <CreditCard className="w-10 h-10" />
+                      </div>
+                      <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-3">
+                          Débloquer le Certificat ?
+                      </h3>
+                      <p className="text-slate-600 dark:text-slate-400 mb-8 leading-relaxed">
+                          Voulez-vous débloquer votre certificat <strong>{certToUnlock.detectedLevel}</strong> en {certToUnlock.language} ?<br/>
+                          <span className="text-indigo-600 dark:text-indigo-400 font-bold">-{CREDIT_COSTS.CERTIFICATE_UNLOCK} Crédits</span> seront déduits de votre solde.
+                      </p>
+                      
+                      <div className="space-y-3">
+                          <button 
+                            onClick={handleConfirmUnlock}
+                            disabled={isUnlocking}
+                            className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl shadow-xl shadow-indigo-500/20 transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
+                          >
+                              {isUnlocking ? <Loader2 className="w-6 h-6 animate-spin" /> : <Check className="w-6 h-6" />}
+                              Confirmer le déblocage
+                          </button>
+                          <button 
+                            onClick={() => setCertToUnlock(null)}
+                            disabled={isUnlocking}
+                            className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95"
+                          >
+                              Annuler
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </div>
       )}
     </div>
   );
