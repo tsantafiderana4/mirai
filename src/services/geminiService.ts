@@ -250,7 +250,7 @@ export async function* sendMessageStream(
 
 // 3. TEXT-TO-SPEECH (TTS)
 export const generateSpeech = async (text: string, voiceName: string = 'Kore'): Promise<ArrayBuffer | null> => {
-    const AUDIO_MODELS = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts-001', 'gemini-2.5-pro-tts-001', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'];
+    const AUDIO_MODELS = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts', 'gemini-2.5-flash-tts'];
     const MAX_RETRIES = AUDIO_MODELS.length - 1;
     
     // Fonction pour récupérer une clé API de manière dynamique

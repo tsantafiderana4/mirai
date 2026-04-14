@@ -19,7 +19,7 @@ const VerifyCertificate: React.FC<Props> = ({ certId, onClose }) => {
                 const { data, error } = await supabase
                     .from('certificates')
                     .select('*')
-                    .eq('id', certId)
+                    .eq('id', certId.trim())
                     .single();
                 
                 if (data && !error) {
@@ -122,13 +122,24 @@ const VerifyCertificate: React.FC<Props> = ({ certId, onClose }) => {
                                     <span className="text-xs font-bold uppercase">Date d'émission</span>
                                 </div>
                                 <p className="font-bold text-slate-900 dark:text-white">
-                                    {new Date(cert.issueDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                                    {isNaN(new Date(cert.issueDate).getTime()) 
+                                        ? 'Date non disponible' 
+                                        : new Date(cert.issueDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
                                 </p>
                             </div>
                             <div className="text-right">
                                 <div className="text-xs font-bold text-slate-400 uppercase mb-1">Score Global</div>
                                 <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{Math.round((cert.globalScore || cert.score) ?? 0)}%</p>
                             </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <button className="w-full py-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 font-bold rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-all">
+                                Voir Rapport
+                            </button>
+                            <button className="w-full py-3 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 font-bold rounded-xl hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-all">
+                                Voir Certificat
+                            </button>
                         </div>
 
                         <div className="pt-6 border-t border-slate-100 dark:border-slate-700">

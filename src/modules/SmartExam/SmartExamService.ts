@@ -412,7 +412,7 @@ export const unlockCertificate = async (result: ExamResultDetailed, user: UserPr
 
         // 3. Update existing certificate record
         console.log("Searching for certificate with exam_id:", result.examId);
-        const { data: existingCert, error: fetchError } = await supabase
+        let { data: existingCert, error: fetchError } = await supabase
             .from('certificates')
             .select('id, status')
             .eq('exam_id', result.examId)
@@ -421,7 +421,32 @@ export const unlockCertificate = async (result: ExamResultDetailed, user: UserPr
         console.log("Found certificate:", existingCert, "Error:", fetchError);
 
         if (fetchError || !existingCert) {
-            throw new Error(`Certificat non trouvé pour exam_id: ${result.examId}`);
+            console.log("Certificate not found, creating new one for exam_id:", result.examId);
+            const newCert = {
+                id: `CERT-${crypto.randomUUID().slice(0, 8).toUpperCase()}-${user.id.slice(0, 4)}`,
+                user_id: user.id,
+                user_name: user.username,
+                user_full_name: user.username,
+                language: result.language,
+                level: result.detectedLevel,
+                exam_id: result.examId,
+                issue_date: new Date().toISOString(),
+                validation_hash: crypto.randomUUID(),
+                qr_code_data: `${window.location.origin}/verify/TEMP`,
+                score: result.globalScore,
+                status: 'débloqué'
+            };
+            
+            const { data: insertedCert, error: insertError } = await supabase.from('certificates').insert([newCert]).select().single();
+            if (insertError) {
+                console.error("Insert error:", insertError);
+                throw insertError;
+            }
+            existingCert = insertedCert;
+        }
+
+        if (!existingCert) {
+            throw new Error("Certificate record not found or could not be created.");
         }
 
         console.log("Updating certificate status to 'débloqué' for exam_id:", result.examId);

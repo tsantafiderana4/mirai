@@ -1,13 +1,14 @@
 
 import React from 'react';
 import { ExamResultDetailed } from '../types';
-import { Award, Target, TrendingUp, AlertTriangle, Lock, Loader2, Check } from 'lucide-react';
+import { Award, Target, TrendingUp, AlertTriangle, Lock, Loader2, Check, Volume2 } from 'lucide-react';
 import CertificateView from './Certificate';
 import { useTranslation } from '../../../contexts/LanguageContext';
 import { unlockCertificate } from '../SmartExamService';
 import { UserProfile } from '../../../types';
 import { CREDIT_COSTS } from '../../../services/creditService';
 import { toast } from '../../../components/Toaster';
+import { useTTS } from '../../../hooks/useTTS';
 
 interface Props {
     result: ExamResultDetailed;
@@ -22,10 +23,15 @@ const ExamResult: React.FC<Props> = ({ result, user, onClose, initialShowCert = 
     const [showCert, setShowCert] = React.useState(initialShowCert && !!certId);
     const [isUnlocking, setIsUnlocking] = React.useState(false);
     const [showUnlockConfirm, setShowUnlockConfirm] = React.useState(false);
+    const { generateSpeech, isLoading: isTTSLoading } = useTTS();
 
     if (showCert && certId) {
         return <CertificateView result={{ ...result, certificateId: certId }} onClose={() => setShowCert(false)} />;
     }
+
+    const handleReadFeedback = async () => {
+        await generateSpeech(result.feedback, 'gemini-2.5-flash-preview-tts', 'Kore');
+    };
 
     const handleUnlock = async () => {
         if (isUnlocking) return;
@@ -153,10 +159,18 @@ const ExamResult: React.FC<Props> = ({ result, user, onClose, initialShowCert = 
                         <div className={`p-6 md:p-8 rounded-3xl border mb-10 ${result.passed ? 'bg-emerald-50 dark:bg-emerald-900/10 border-emerald-100 dark:border-emerald-900/30' : 'bg-amber-50 dark:bg-amber-900/10 border-amber-100 dark:border-amber-900/30'}`}>
                             <div className="flex items-center gap-3 mb-4">
                                 <img src="https://i.ibb.co/B2XmRwmJ/logo.png" className="w-10 h-10 rounded-full shadow-sm" />
-                                <div>
+                                <div className="flex-1">
                                     <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider">{t('exam.feedback_title')}</h3>
                                     <p className="text-xs text-slate-500">{t('landing_sections.cert_card_role')}</p>
                                 </div>
+                                <button 
+                                    onClick={handleReadFeedback}
+                                    disabled={isTTSLoading}
+                                    className="p-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full hover:bg-indigo-200 dark:hover:bg-indigo-800/50 transition-colors"
+                                    title="Lire le feedback"
+                                >
+                                    {isTTSLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Volume2 className="w-5 h-5" />}
+                                </button>
                             </div>
                             <div className="text-slate-700 dark:text-slate-300 text-sm md:text-base leading-relaxed font-medium">
                                 {formatFeedback(result.feedback)}

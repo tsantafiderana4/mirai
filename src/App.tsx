@@ -78,7 +78,10 @@ const AppContent: React.FC = () => {
     const path = window.location.pathname;
     if (path.startsWith('/verify/')) {
         const certId = path.split('/verify/')[1];
-        if (certId) setVerifyCertId(certId);
+        if (certId) {
+            console.log("Certificate verification detected for ID:", certId);
+            setVerifyCertId(certId);
+        }
     }
 
     const initAuth = async () => {
