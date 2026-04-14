@@ -33,62 +33,29 @@ Deno.serve(async (req) => {
       })
     }
 
-    const body = await req.json()
-    const { action, model, contents, config, schemaType, text, voiceName, certId } = body
-    
-    if (action === 'health') {
-        const apiKey = Deno.env.get('GEMINI_API_KEY');
-        const hasUrl = !!Deno.env.get('SUPABASE_URL');
-        const hasAnonKey = !!Deno.env.get('SUPABASE_ANON_KEY');
-        const hasServiceKey = !!Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-        return new Response(JSON.stringify({ 
-            status: 'ok', 
-            hasKey: !!apiKey,
-            hasUrl,
-            hasAnonKey,
-            hasServiceKey
-        }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
-    }
-
-    if (action === 'verify_certificate') {
-        const supabaseUrl = Deno.env.get('SUPABASE_URL')
-        const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-        
-        if (!supabaseUrl || !serviceRoleKey) {
-            return new Response(JSON.stringify({ error: 'Configuration admin incomplète.' }), {
-                status: 500,
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            })
-        }
-
-        const adminClient = createClient(supabaseUrl, serviceRoleKey)
-        
-        const { data, error } = await adminClient
-            .from('certificates')
-            .select('*, exam_results(*)')
-            .eq('id', certId.trim())
-            .single()
-            
-        if (error || !data) {
-            return new Response(JSON.stringify({ error: 'Certificat introuvable.' }), {
-                status: 404,
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            })
-        }
-
-        return new Response(JSON.stringify({ data }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-    }
-
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'Non autorisé. Token manquant.' }), { 
         status: 401, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       })
+    }
+
+    const body = await req.json()
+    const { action, model, contents, config, schemaType, text, voiceName } = body
+    
+    if (action === 'health') {
+        const apiKey = Deno.env.get('GEMINI_API_KEY');
+        const hasUrl = !!Deno.env.get('SUPABASE_URL');
+        const hasAnonKey = !!Deno.env.get('SUPABASE_ANON_KEY');
+        return new Response(JSON.stringify({ 
+            status: 'ok', 
+            hasKey: !!apiKey,
+            hasUrl,
+            hasAnonKey
+        }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
     }
 
     const supabaseClient = createClient(
