@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Certificate, UserProfile } from '../types';
-import { supabase } from '../lib/supabase';
-import { CheckCircle, XCircle, Loader2, Award, Calendar, User, Globe, FileText, Eye } from 'lucide-react';
+import { supabaseUrl, supabaseAnonKey } from '../lib/supabase';
+import { CheckCircle, XCircle, Loader2, Award, Calendar, Globe, FileText, Eye } from 'lucide-react';
 import CertificateView from '../modules/SmartExam/components/Certificate';
 import ExamResult from '../modules/SmartExam/components/ExamResult';
 import { ExamResultDetailed } from '../modules/SmartExam/types';
@@ -21,13 +21,26 @@ const VerifyCertificate: React.FC<Props> = ({ certId, onClose }) => {
     useEffect(() => {
         const fetchCert = async () => {
             try {
-                const { data, error } = await supabase
-                    .from('certificates')
-                    .select('*, exam_results(*)')
-                    .eq('id', certId.trim())
-                    .single();
+                // Use Edge Function to bypass RLS for public verification
+                const response = await fetch(`${supabaseUrl}/functions/v1/gemini-api`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': supabaseAnonKey
+                    },
+                    body: JSON.stringify({ 
+                        action: 'verify_certificate', 
+                        certId: certId.trim() 
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error("Certificat introuvable ou erreur serveur.");
+                }
+
+                const { data } = await response.json();
                 
-                if (data && !error) {
+                if (data) {
                     const issueDate = data.issue_date || data.created_at;
                     
                     const certData: Certificate = {
