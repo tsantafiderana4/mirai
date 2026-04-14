@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Certificate } from '../types';
 import { supabase } from '../lib/supabase';
-import { CheckCircle, XCircle, Loader2, Award, Calendar, User, Globe } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, Award, Calendar, Globe } from 'lucide-react';
 
 interface Props {
     certId: string;
@@ -23,6 +23,10 @@ const VerifyCertificate: React.FC<Props> = ({ certId, onClose }) => {
                     .single();
                 
                 if (data && !error) {
+                    // Use issue_date if available, fallback to created_at, then current date
+                    const rawDate = data.issue_date || data.created_at || new Date().toISOString();
+                    const parsedDate = new Date(rawDate).getTime();
+                    
                     setCert({
                         id: data.id,
                         userId: data.user_id,
@@ -31,13 +35,13 @@ const VerifyCertificate: React.FC<Props> = ({ certId, onClose }) => {
                         language: data.language,
                         level: data.level,
                         score: data.score,
-                        issueDate: new Date(data.created_at).getTime(),
+                        issueDate: isNaN(parsedDate) ? Date.now() : parsedDate,
                         examId: data.exam_id
                     });
                 } else {
                     setError(true);
                 }
-            } catch (e) {
+            } catch {
                 setError(true);
             } finally {
                 setLoading(false);

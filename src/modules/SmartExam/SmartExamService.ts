@@ -412,11 +412,13 @@ export const unlockCertificate = async (result: ExamResultDetailed, user: UserPr
 
         // 3. Update existing certificate record
         console.log("Searching for certificate with exam_id:", result.examId);
-        let { data: existingCert, error: fetchError } = await supabase
+        const { data: existingCertData, error: fetchError } = await supabase
             .from('certificates')
             .select('id, status')
             .eq('exam_id', result.examId)
             .single();
+
+        let existingCert = existingCertData;
 
         console.log("Found certificate:", existingCert, "Error:", fetchError);
 
@@ -453,7 +455,8 @@ export const unlockCertificate = async (result: ExamResultDetailed, user: UserPr
         const { data: updateData, error: certError } = await supabase.from('certificates')
             .update({
                 status: 'débloqué',
-                qr_code_data: `${window.location.origin}/verify/${existingCert.id}`
+                qr_code_data: `${window.location.origin}/verify/${existingCert.id}`,
+                issue_date: new Date().toISOString()
             })
             .eq('exam_id', result.examId)
             .select();
