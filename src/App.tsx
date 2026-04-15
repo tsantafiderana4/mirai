@@ -287,6 +287,7 @@ const AppContent: React.FC = () => {
   const needsOnboarding = !user?.preferences || !user?.preferences?.targetLanguage;
 
   // Trigger Cultural Intro if not seen for current lang/level
+  /* 
   useEffect(() => {
     if (user && user.preferences && !needsOnboarding && !showCulturalIntro) {
         const key = `${user.preferences.targetLanguage}-${user.preferences.level}`;
@@ -299,6 +300,7 @@ const AppContent: React.FC = () => {
         }
     }
   }, [user, needsOnboarding, currentSession, showCulturalIntro]);
+  */
 
   const getAgentContext = () => {
       if (!user) return "Page d'Accueil (Visiteur non connecté) - Présentation de TeacherMada";
@@ -471,6 +473,7 @@ const AppContent: React.FC = () => {
                 onShowPayment={() => setShowPayment(true)}
                 onChangeCourse={handleChangeCourse}
                 onStartVoiceCall={() => setShowVoiceCall(true)}
+                onShowCulturalIntro={() => setShowCulturalIntro(true)}
               />
           )}
 

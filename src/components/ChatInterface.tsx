@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Phone, ArrowLeft, Sun, Moon, Zap, ChevronDown, Repeat, MessageCircle, Brain, Loader2, AlertTriangle, Play, BookOpen, Trophy, Cloud, CloudOff, CloudLightning, Award, Check, Volume2 } from 'lucide-react';
+import { Phone, ArrowLeft, Sun, Moon, Zap, ChevronDown, Repeat, MessageCircle, Brain, Loader2, AlertTriangle, Play, BookOpen, Trophy, Cloud, CloudOff, CloudLightning, Award, Check, Volume2, Globe } from 'lucide-react';
 import { ExplanationLanguage } from '../types';
 import { ChatMessage } from '../types';
 import { generateText } from '../services/geminiService';
@@ -26,6 +26,7 @@ interface Props {
   notify: (m: string, t?: string) => void;
   onShowPayment: () => void;
   onChangeCourse: () => void;
+  onShowCulturalIntro: () => void;
 }
 
 // Helper to convert Raw PCM to AudioBuffer
@@ -46,7 +47,7 @@ function pcmToAudioBuffer(data: Uint8Array, ctx: AudioContext, sampleRate: numbe
 const ChatInterface: React.FC<Props> = ({ 
   onShowProfile, onExit, 
   onStartPractice, onStartExercise, onStartVoiceCall, onStartExam,
-  notify, onShowPayment, onChangeCourse
+  notify, onShowPayment, onChangeCourse, onShowCulturalIntro
 }) => {
   const { user, setUser, setCurrentSession } = useAppStore();
   const { refetch: refetchUser } = useUserProfile(user?.id || '');
@@ -347,22 +348,31 @@ const ChatInterface: React.FC<Props> = ({
         `}</style>
         <div className="max-w-3xl mx-auto space-y-6">
             <div className="w-full mb-6 animate-fade-in">
-                <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-2xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm">
-                    <h3 className="font-black text-slate-800 dark:text-white uppercase tracking-widest mb-4 flex items-center gap-2 text-xs">
-                        <BookOpen className="w-4 h-4 text-indigo-500"/>
-                        {t('common.guide.title')}
-                    </h3>
-                    <div className="space-y-2">
+                <div className="bg-white/90 dark:bg-slate-800/90 backdrop-blur-md rounded-[2rem] border border-slate-200 dark:border-slate-700 p-6 shadow-xl shadow-slate-200/50 dark:shadow-none">
+                    <div className="flex items-center justify-between mb-6">
+                        <h3 className="font-black text-slate-900 dark:text-white uppercase tracking-[0.2em] flex items-center gap-3 text-[10px]">
+                            <div className="w-8 h-8 bg-indigo-500 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
+                                <BookOpen className="w-4 h-4"/>
+                            </div>
+                            {t('common.guide.title')}
+                        </h3>
+                        <button 
+                            onClick={onShowCulturalIntro}
+                            className="flex items-center gap-2 px-4 py-2 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-all active:scale-95 border border-emerald-100 dark:border-emerald-800/50"
+                        >
+                            <Globe className="w-3.5 h-3.5" />
+                            Immersion Culturelle
+                        </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {[
-                            { id: 'start_lesson', icon: Play, color: 'text-emerald-500', action: handleStartCourse },
-                            { id: 'pronunciation', icon: Volume2, color: 'text-cyan-500' },
-                            { id: 'exercise', icon: Brain, color: 'text-purple-500', action: onStartExercise },
-                            { id: 'dialogue', icon: MessageCircle, color: 'text-blue-500', action: onStartPractice },
-                            { id: 'voice_call', icon: Phone, color: 'text-indigo-500', action: handleVoiceCallClick },
-                            { id: 'exam', icon: Trophy, color: 'text-rose-500', action: onStartExam },
-                            { id: 'certificate', icon: Award, color: 'text-yellow-500' },
-                            { id: 'credits', icon: Zap, color: 'text-amber-500', action: onShowPayment },
-                            { id: 'change_course', icon: Repeat, color: 'text-red-500', action: onChangeCourse }
+                            { id: 'start_lesson', icon: Play, color: 'bg-emerald-500', action: handleStartCourse },
+                            { id: 'exercise', icon: Brain, color: 'bg-purple-500', action: onStartExercise },
+                            { id: 'dialogue', icon: MessageCircle, color: 'bg-blue-500', action: onStartPractice },
+                            { id: 'voice_call', icon: Phone, color: 'bg-indigo-500', action: handleVoiceCallClick },
+                            { id: 'exam', icon: Trophy, color: 'bg-rose-500', action: onStartExam },
+                            { id: 'credits', icon: Zap, color: 'bg-amber-500', action: onShowPayment },
                         ].map((item) => {
                             const isOpen = openGuideItem === item.id;
                             const guideText = t(`common.guide.${item.id}`);
@@ -370,38 +380,46 @@ const ChatInterface: React.FC<Props> = ({
                             const description = descParts.join(':').trim();
 
                             return (
-                                <div key={item.id} className="border border-slate-100 dark:border-slate-700/50 rounded-xl overflow-hidden">
-                                    <div className="w-full flex items-center justify-between p-3 bg-slate-50/50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors">
-                                        <div 
-                                            className={`flex items-center gap-3 flex-1 ${item.action ? 'cursor-pointer group' : ''}`}
-                                            onClick={(e) => {
-                                                if (item.action) {
-                                                    e.stopPropagation();
-                                                    item.action();
-                                                } else {
-                                                    setOpenGuideItem(isOpen ? null : item.id);
-                                                }
-                                            }}
-                                        >
-                                            <item.icon className={`w-4 h-4 ${item.color}`} />
-                                            <span className={`text-xs font-bold ${item.action ? 'text-indigo-600 dark:text-indigo-400 group-hover:underline' : 'text-slate-700 dark:text-slate-200'}`} title={item.action ? "Cliquez pour ouvrir" : ""}>
-                                                {title.trim()}
-                                            </span>
+                                <div key={item.id} className={`group relative transition-all duration-300 ${isOpen ? 'md:col-span-2' : ''}`}>
+                                    <div 
+                                        onClick={() => setOpenGuideItem(isOpen ? null : item.id)}
+                                        className={`flex items-center gap-4 p-3 rounded-2xl border transition-all cursor-pointer ${
+                                            isOpen 
+                                            ? 'bg-slate-50 dark:bg-slate-900 border-indigo-200 dark:border-indigo-900 shadow-inner' 
+                                            : 'bg-white dark:bg-slate-800/50 border-slate-100 dark:border-slate-700/50 hover:border-indigo-200 dark:hover:border-indigo-800 hover:shadow-md'
+                                        }`}
+                                    >
+                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-lg ${item.color} shrink-0 group-hover:scale-110 transition-transform`}>
+                                            <item.icon className="w-5 h-5" />
                                         </div>
-                                        <button 
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setOpenGuideItem(isOpen ? null : item.id);
-                                            }}
-                                            className="p-1 -mr-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors"
-                                            title="Voir l'explication"
-                                        >
-                                            <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
-                                        </button>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center justify-between">
+                                                <h4 className="text-xs font-black text-slate-800 dark:text-white truncate uppercase tracking-tight">
+                                                    {title.trim()}
+                                                </h4>
+                                                <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} />
+                                            </div>
+                                            {!isOpen && (
+                                                <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                                                    {description || "En savoir plus..."}
+                                                </p>
+                                            )}
+                                        </div>
                                     </div>
-                                    {isOpen && description && (
-                                        <div className="p-3 pt-0 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-500 dark:text-slate-400 leading-relaxed border-t border-slate-100 dark:border-slate-700/50">
-                                            {description}
+                                    
+                                    {isOpen && (
+                                        <div className="mt-2 p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 animate-fade-in-up">
+                                            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-4">
+                                                {description}
+                                            </p>
+                                            {item.action && (
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); item.action!(); }}
+                                                    className="w-full py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[10px] font-black uppercase tracking-widest rounded-xl hover:opacity-90 transition-all active:scale-[0.98] shadow-lg"
+                                                >
+                                                    Lancer l'action
+                                                </button>
+                                            )}
                                         </div>
                                     )}
                                 </div>
