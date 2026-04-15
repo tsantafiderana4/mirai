@@ -151,45 +151,45 @@ export const SmartExamService = {
         try {
             // 2. Generate Exam
             const prompt = `
+            Tu es un concepteur d'examens linguistiques de niveau international (expert certifié IELTS, DELF, TOEFL).
             Génère un examen de certification de type "${type}" pour l'étudiant "${user.username}" (Langue cible : "${lang}").
+            Niveau cible strict : "${level}".
+            Langue d'explication et d'instruction : "${explanationLang}".
             
-            OBJECTIF : Créer un examen immersif, réaliste et professionnel, similaire au DELF/DALF ou IELTS.
+            OBJECTIF : Créer un examen sérieux, immersif, non ambigu et capable de mesurer réellement la capacité à communiquer. C'est meilleur que l'examen officiel dans un enseignement supérieur.
+
+            RÈGLES OBLIGATOIRES :
+            1. CONTEXTE RÉEL : Chaque question DOIT être basée sur une situation concrète (travail, voyage, vie sociale, étude, communication réelle).
+            2. STRUCTURE STRICTE : Chaque question doit contenir :
+               - context : la situation ou le texte/dialogue de base.
+               - instruction : consigne claire en "${explanationLang}".
+               - question : la question précise en "${lang}".
+               - options : (si QCM) 4 options avec UNE SEULE bonne réponse, zéro ambiguïté.
+            3. TYPES DE COMPÉTENCES : Inclure obligatoirement : compréhension globale, compréhension de détail, intention du locuteur, inférence logique et pièges, vocabulaire/grammaire en contexte.
+            4. IMMERSION : Utiliser des scénarios réalistes (emails, conversations, annonces, dialogues naturels).
+            5. DIFFICULTÉ PROGRESSIVE (20 questions au total) :
+               - Q1-5 : Facile (bases du niveau ${level})
+               - Q6-10 : Moyen (cœur du niveau ${level})
+               - Q11-15 : Difficile (nuances et pièges)
+               - Q16-20 : Avancé (limite supérieure du niveau ${level})
+            6. ADAPTATION CEFR : Respect strict du niveau "${level}".
+            7. VALIDATION INTERNE : Avant de générer, assure-toi qu'il n'y a aucune ambiguïté et que la cohérence contexte <-> réponse est parfaite.
             
-            CONTEXTE ET SCÉNARIOS :
-            - Utilise des situations de la vie réelle (travail, voyage, vie sociale, études).
-            - Les questions doivent être contextualisées (ex: "Vous êtes à la réception d'un hôtel...", "Votre collègue vous demande...").
-            - Adapte strictement le vocabulaire et la complexité au niveau "${level}".
+            STRUCTURE DE L'EXAMEN (20 questions) :
+            - 5 questions 'listening' (Compréhension Orale) : Fournis un script naturel dans 'context'.
+            - 5 questions 'qcm' (Compréhension Écrite & Grammaire) : Textes courts, emails, annonces dans 'context'.
+            - 5 questions 'writing' (Expression Écrite) : Scénarios de rédaction (email, essai, réponse).
+            - 5 questions 'speaking' (Expression Orale) : Mise en situation où l'élève doit parler.
             
-            STRUCTURE DE L'EXAMEN (20 questions au total) :
-            1. COMPRÉHENSION ORALE (5 questions) :
-               - Fournis un script court et naturel dans 'context'.
-               - La question doit porter sur un détail ou l'intention globale.
-            2. COMPRÉHENSION ÉCRITE & GRAMMAIRE (5 questions) :
-               - Mélange de QCM, Vrai/Faux et phrases à trous.
-               - Utilise des textes courts (emails, annonces, articles).
-            3. EXPRESSION ÉCRITE (5 questions) :
-               - Demande de rédiger des réponses courtes (A1/A2) ou des argumentations (B2/C1).
-               - Scénarios : Répondre à une invitation, écrire un email professionnel, donner son avis.
-            4. EXPRESSION ORALE / MISE EN SITUATION (5 questions) :
-               - Décris une situation où l'élève doit parler.
-               - Ex: "Expliquez à votre ami pourquoi vous aimez ce livre."
-            
-            DIFFICULTÉ PROGRESSIVE AU SEIN DU NIVEAU ${level} :
-            - Q1-5: Facile | Q6-10: Moyen | Q11-15: Difficile | Q16-20: Expert (limite du niveau).
-            
-            LANGUE :
-            - Les questions (le contenu de l'examen, les textes de compréhension, les options) DOIVENT être intégralement en langue cible : "${lang}".
-            - Les instructions, les contextes de mise en situation, et les explications DOIVENT être en langue d'explication : "${explanationLang}".
-            
-            Difficultés cibles de l'élève : ${difficulties}.
+            Difficultés cibles de l'élève à tester si possible : ${difficulties}.
             
             Output JSON Schema:
             {
                 "sections": [
-                    { "id": "l1", "type": "listening", "question": "...", "context": "Texte à lire par l'IA...", "options": ["...", "..."], "weight": 2 },
-                    { "id": "q1", "type": "qcm", "question": "...", "options": ["...", "..."], "weight": 1 },
-                    { "id": "w1", "type": "writing", "question": "...", "weight": 3 },
-                    { "id": "s1", "type": "speaking", "question": "...", "weight": 3 }
+                    { "id": "l1", "type": "listening", "instruction": "Écoutez l'audio et répondez...", "context": "Script audio...", "question": "...", "options": ["A", "B", "C", "D"], "weight": 1 },
+                    { "id": "q1", "type": "qcm", "instruction": "Lisez le texte et choisissez...", "context": "Texte...", "question": "...", "options": ["A", "B", "C", "D"], "weight": 1 },
+                    { "id": "w1", "type": "writing", "instruction": "Rédigez un email...", "context": "Vous avez reçu une invitation...", "question": "Répondez à cet email...", "weight": 3 },
+                    { "id": "s1", "type": "speaking", "instruction": "Parlez pendant 1 minute...", "context": "Vous êtes au restaurant...", "question": "Commandez votre repas...", "weight": 3 }
                 ]
             }
             `;
@@ -205,12 +205,13 @@ export const SmartExamService = {
                             properties: {
                                 id: { type: "STRING" },
                                 type: { type: "STRING" },
+                                instruction: { type: "STRING" },
                                 question: { type: "STRING" },
                                 context: { type: "STRING" },
                                 options: { type: "ARRAY", items: { type: "STRING" } },
                                 weight: { type: "NUMBER" }
                             },
-                            required: ["id", "type", "question", "weight"]
+                            required: ["id", "type", "instruction", "question", "context", "weight"]
                         }
                     }
                 }
@@ -253,7 +254,8 @@ export const SmartExamService = {
     async evaluateExam(exam: SmartExam, answers: Record<string, string>, user: UserProfile): Promise<ExamResultDetailed> {
         const explanationLang = user.preferences?.explanationLanguage || 'Français';
         const prompt = `
-        En tant que TeacherMada (Professeur expert, strict mais bienveillant), évalue cet examen de certification pour l'étudiant "${user.username}".
+        Tu es un examinateur officiel de niveau international (expert certifié IELTS, DELF, TOEFL).
+        Évalue cet examen de certification pour le candidat "${user.username}".
         Langue évaluée : ${exam.language}.
         Niveau visé par l'examen : ${exam.targetLevel}.
         
@@ -261,21 +263,17 @@ export const SmartExamService = {
         ${exam.sections.map(s => `[${s.type.toUpperCase()}] Q: ${s.question} \n R: ${answers[s.id] ? answers[s.id] : "AUCUNE RÉPONSE (Temps écoulé ou ignoré)"}`).join('\n\n')}
         
         Tâche :
-        1. Analyse la grammaire, le vocabulaire, la cohérence de manière très stricte et professionnelle.
+        1. Analyse la grammaire, le vocabulaire, la cohérence et la pertinence de manière TRÈS STRICTE et professionnelle.
         2. Estime le niveau RÉEL (CEFR) basé sur la performance globale.
-           - IMPORTANT : Si le score est inférieur à 70/100, le niveau détecté NE PEUT PAS être supérieur au niveau visé (${exam.targetLevel}). Il doit être "Inférieur à ${exam.targetLevel}" ou le niveau en dessous.
-           - Si le score est élevé (> 80), tu peux estimer un niveau supérieur si le vocabulaire le justifie.
+           - IMPORTANT : Si le score est inférieur à 70/100, le niveau détecté NE PEUT PAS être supérieur au niveau visé (${exam.targetLevel}).
         3. Calcule un score sur 100 (sois exigeant, les fautes de base pénalisent lourdement).
            - Si "AUCUNE RÉPONSE", comptez 0 pour cette question.
         4. Donne un feedback constructif et professionnel en "${explanationLang}". 
+           - Le ton doit être académique, objectif et encourageant.
            - Si l'étudiant réussit (>= 70), félicite-le de manière formelle.
-           - Si l'étudiant échoue (< 70), explique-lui clairement pourquoi il n'est pas admis (score insuffisant) et donne-lui des recommandations précises.
-           - RECOMMANDATIONS CIBLÉES :
-             * Si la grammaire/vocabulaire est faible : Recommande de "renforcer les bases via le Chat interactif".
-             * Si l'expression orale/écoute est faible : Recommande de "pratiquer l'oral via l'Appel Vocal (TeacherMada Live)".
-             * Si tout est moyen : Recommande les "Jeux de Rôle" pour la mise en situation.
-           - FORMAT DU FEEDBACK : Le texte DOIT être aéré. Utilise le caractère spécial '\\n' pour faire des sauts de ligne dans la chaîne JSON. Ne mets pas tout sur une seule ligne.
-        5. Ne mentionne jamais que tu es une IA ou un robot. Parle en tant que "TeacherMada, Directeur Pédagogique".
+           - Si l'étudiant échoue (< 70), explique-lui clairement les lacunes (grammaire, vocabulaire, compréhension) et donne-lui un plan d'action.
+           - FORMAT DU FEEDBACK : Le texte DOIT être aéré. Utilise le caractère spécial '\\n' pour faire des sauts de ligne dans la chaîne JSON.
+        5. Ne mentionne jamais que tu es une IA. Parle en tant que "Jury d'Examen TeacherMada".
         
         Output JSON.
         `;

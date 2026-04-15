@@ -525,7 +525,19 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                             </div>
                         )}
 
-                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white leading-relaxed">
+                        {currentSection.instruction && (
+                            <div className="mb-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border-l-4 border-indigo-500 text-slate-700 dark:text-slate-300 text-sm font-medium">
+                                {currentSection.instruction}
+                            </div>
+                        )}
+
+                        {currentSection.type !== 'listening' && currentSection.context && (
+                            <div className="mb-6 p-5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm text-slate-800 dark:text-slate-200 text-sm leading-relaxed whitespace-pre-wrap">
+                                {currentSection.context}
+                            </div>
+                        )}
+
+                        <h2 className="text-xl font-black text-slate-900 dark:text-white leading-relaxed mb-6">
                             {currentSection.question}
                         </h2>
                     </div>

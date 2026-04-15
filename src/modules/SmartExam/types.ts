@@ -4,6 +4,7 @@ export type ExamType = 'diagnostic' | 'certification';
 export interface ExamSection {
     id: string;
     type: 'qcm' | 'writing' | 'listening' | 'speaking';
+    instruction?: string; // Clear instruction in explanation language
     question: string;
     options?: string[]; // For QCM
     context?: string; // Text to read or listen to
