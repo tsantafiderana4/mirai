@@ -159,37 +159,59 @@ export const SmartExamService = {
             OBJECTIF : Créer un examen sérieux, immersif, non ambigu et capable de mesurer réellement la capacité à communiquer. C'est meilleur que l'examen officiel dans un enseignement supérieur.
 
             RÈGLES OBLIGATOIRES :
-            1. CONTEXTE RÉEL : Chaque question DOIT être basée sur une situation concrète (travail, voyage, vie sociale, étude, communication réelle).
-            2. STRUCTURE STRICTE : Chaque question doit contenir :
-               - context : la situation ou le texte/dialogue de base.
-               - instruction : consigne claire en "${explanationLang}".
-               - question : la question précise en "${lang}".
-               - options : (si QCM) 4 options avec UNE SEULE bonne réponse, zéro ambiguïté.
-            3. TYPES DE COMPÉTENCES : Inclure obligatoirement : compréhension globale, compréhension de détail, intention du locuteur, inférence logique et pièges, vocabulaire/grammaire en contexte.
-            4. IMMERSION : Utiliser des scénarios réalistes (emails, conversations, annonces, dialogues naturels).
-            5. DIFFICULTÉ PROGRESSIVE (20 questions au total) :
-               - Q1-5 : Facile (bases du niveau ${level})
-               - Q6-10 : Moyen (cœur du niveau ${level})
-               - Q11-15 : Difficile (nuances et pièges)
-               - Q16-20 : Avancé (limite supérieure du niveau ${level})
-            6. ADAPTATION CEFR : Respect strict du niveau "${level}".
-            7. VALIDATION INTERNE : Avant de générer, assure-toi qu'il n'y a aucune ambiguïté et que la cohérence contexte <-> réponse est parfaite.
+            1. CONTEXTE RÉEL : Chaque section DOIT être basée sur une situation concrète (travail, voyage, vie sociale, étude, communication réelle).
+            2. STRUCTURE STRICTE ET LANGUES : Chaque section doit contenir :
+               - context : la situation ou le texte/dialogue de base (long et riche pour la lecture/écoute). DOIT ÊTRE EN LANGUE CIBLE ("${lang}").
+               - instruction : consigne claire. DOIT ÊTRE EN LANGUE D'EXPLICATION ("${explanationLang}").
+               - questions : un tableau de questions liées à ce contexte. LA QUESTION ET LES OPTIONS DOIVENT ÊTRE EN LANGUE CIBLE ("${lang}").
+            3. TYPES DE QUESTIONS : Variez les formats pour les sections 'qcm' (lecture) et 'listening' :
+               - 'qcm' : Choix multiple classique (fournir 'options').
+               - 'true_false_not_given' : Vrai / Faux / Non Donné (fournir ces 3 choix traduits dans la langue cible dans 'options').
+               - 'fill_in_the_blanks' : Texte à trous. La 'question' contient une phrase avec "_____" et l'étudiant doit trouver le mot manquant (ne pas fournir d'options).
+               - 'open' : Question ouverte (pour 'writing' et 'speaking').
+            4. TYPES DE COMPÉTENCES : Inclure obligatoirement : compréhension globale, compréhension de détail, intention du locuteur, inférence logique et pièges, vocabulaire/grammaire en contexte.
+            5. IMMERSION : Utiliser des scénarios réalistes (emails, conversations, annonces, dialogues naturels).
+            6. DIFFICULTÉ PROGRESSIVE (Environ 15-20 questions au total) :
+               - Adapter la difficulté des questions au sein du niveau ${level}.
+            7. ADAPTATION CEFR : Respect strict du niveau "${level}".
+            8. VALIDATION INTERNE : Avant de générer, assure-toi qu'il n'y a aucune ambiguïté et que la cohérence contexte <-> réponse est parfaite.
             
-            STRUCTURE DE L'EXAMEN (20 questions) :
-            - 5 questions 'listening' (Compréhension Orale) : Fournis un script naturel dans 'context'.
-            - 5 questions 'qcm' (Compréhension Écrite & Grammaire) : Textes courts, emails, annonces dans 'context'.
-            - 5 questions 'writing' (Expression Écrite) : Scénarios de rédaction (email, essai, réponse).
-            - 5 questions 'speaking' (Expression Orale) : Mise en situation où l'élève doit parler.
+            STRUCTURE DE L'EXAMEN :
+            - COMPRÉHENSION ORALE ('listening') : 4 ou 5 sections. Chaque section a un court dialogue/script dans 'context' et 1 SEULE question dans le tableau 'questions'.
+            - COMPRÉHENSION ÉCRITE ('qcm') : 1 ou 2 sections avec un texte long et riche (500 mots) dans 'context', suivies de 3 à 5 questions chacune.
+            - EXPRESSION ÉCRITE ('writing') : 1 ou 2 sections avec une mise en situation dans 'context' et 1 SEULE question dans le tableau 'questions'.
+            - EXPRESSION ORALE ('speaking') : 1 ou 2 sections avec une mise en situation et 1 SEULE question dans le tableau 'questions'.
             
             Difficultés cibles de l'élève à tester si possible : ${difficulties}.
             
             Output JSON Schema:
             {
                 "sections": [
-                    { "id": "l1", "type": "listening", "instruction": "Écoutez l'audio et répondez...", "context": "Script audio...", "question": "...", "options": ["A", "B", "C", "D"], "weight": 1 },
-                    { "id": "q1", "type": "qcm", "instruction": "Lisez le texte et choisissez...", "context": "Texte...", "question": "...", "options": ["A", "B", "C", "D"], "weight": 1 },
-                    { "id": "w1", "type": "writing", "instruction": "Rédigez un email...", "context": "Vous avez reçu une invitation...", "question": "Répondez à cet email...", "weight": 3 },
-                    { "id": "s1", "type": "speaking", "instruction": "Parlez pendant 1 minute...", "context": "Vous êtes au restaurant...", "question": "Commandez votre repas...", "weight": 3 }
+                    { 
+                        "id": "l1", "type": "listening", "instruction": "Écoutez l'audio et répondez...", "context": "Script audio long...", "weight": 1,
+                        "questions": [
+                            { "id": "l1_q1", "question": "...", "options": ["A", "B", "C", "D"] },
+                            { "id": "l1_q2", "question": "...", "options": ["A", "B", "C", "D"] }
+                        ]
+                    },
+                    { 
+                        "id": "q1", "type": "qcm", "instruction": "Lisez le texte et choisissez...", "context": "Texte très long...", "weight": 1,
+                        "questions": [
+                            { "id": "q1_q1", "question": "...", "options": ["A", "B", "C", "D"] }
+                        ]
+                    },
+                    { 
+                        "id": "w1", "type": "writing", "instruction": "Rédigez un email...", "context": "Vous avez reçu une invitation...", "weight": 3,
+                        "questions": [
+                            { "id": "w1_q1", "question": "Répondez à cet email..." }
+                        ]
+                    },
+                    { 
+                        "id": "s1", "type": "speaking", "instruction": "Parlez pendant 1 minute...", "context": "Vous êtes au restaurant...", "weight": 3,
+                        "questions": [
+                            { "id": "s1_q1", "question": "Commandez votre repas..." }
+                        ]
+                    }
                 ]
             }
             `;
@@ -206,12 +228,23 @@ export const SmartExamService = {
                                 id: { type: "STRING" },
                                 type: { type: "STRING" },
                                 instruction: { type: "STRING" },
-                                question: { type: "STRING" },
                                 context: { type: "STRING" },
-                                options: { type: "ARRAY", items: { type: "STRING" } },
-                                weight: { type: "NUMBER" }
+                                weight: { type: "NUMBER" },
+                                questions: {
+                                    type: "ARRAY",
+                                    items: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            id: { type: "STRING" },
+                                            type: { type: "STRING", description: "qcm, true_false_not_given, fill_in_the_blanks, open" },
+                                            question: { type: "STRING" },
+                                            options: { type: "ARRAY", items: { type: "STRING" } }
+                                        },
+                                        required: ["id", "question"]
+                                    }
+                                }
                             },
-                            required: ["id", "type", "instruction", "question", "context", "weight"]
+                            required: ["id", "type", "instruction", "context", "weight", "questions"]
                         }
                     }
                 }
@@ -253,30 +286,70 @@ export const SmartExamService = {
 
     async evaluateExam(exam: SmartExam, answers: Record<string, string>, user: UserProfile): Promise<ExamResultDetailed> {
         const explanationLang = user.preferences?.explanationLanguage || 'Français';
-        const prompt = `
+        
+        let promptText = `
         Tu es un examinateur officiel de niveau international (expert certifié IELTS, DELF, TOEFL).
         Évalue cet examen de certification pour le candidat "${user.username}".
         Langue évaluée : ${exam.language}.
         Niveau visé par l'examen : ${exam.targetLevel}.
         
         Questions & Réponses :
-        ${exam.sections.map(s => `[${s.type.toUpperCase()}] Q: ${s.question} \n R: ${answers[s.id] ? answers[s.id] : "AUCUNE RÉPONSE (Temps écoulé ou ignoré)"}`).join('\n\n')}
+        `;
+
+        const parts: any[] = [];
         
+        for (const s of exam.sections) {
+            const questionsToEval = s.questions && s.questions.length > 0 
+                ? s.questions 
+                : [{ id: s.id, question: s.question || '' }];
+            
+            promptText += `\n--- SECTION: ${s.type.toUpperCase()} ---\n`;
+            if (s.context) promptText += `CONTEXTE: ${s.context}\n`;
+
+            for (const q of questionsToEval) {
+                const ans = answers[q.id];
+                if (s.type === 'speaking' && ans && ans.startsWith('data:audio/')) {
+                    const [prefix, base64] = ans.split(',');
+                    const mimeType = prefix.split(':')[1].split(';')[0];
+                    promptText += `Q: ${q.question} \n R: [AUDIO FOURNI CI-JOINT]\n\n`;
+                    parts.push({
+                        inlineData: {
+                            mimeType: mimeType,
+                            data: base64
+                        }
+                    });
+                } else {
+                    promptText += `Q: ${q.question} \n R: ${ans ? ans : "AUCUNE RÉPONSE (Temps écoulé ou ignoré)"}\n\n`;
+                }
+            }
+        }
+
+        promptText += `
         Tâche :
         1. Analyse la grammaire, le vocabulaire, la cohérence et la pertinence de manière TRÈS STRICTE et professionnelle.
-        2. Estime le niveau RÉEL (CEFR) basé sur la performance globale.
+        2. Pour les épreuves orales (fichiers audio joints), évalue rigoureusement la prononciation, la fluidité, l'accentuation et l'intonation.
+        3. Estime le niveau RÉEL (CEFR) basé sur la performance globale.
            - IMPORTANT : Si le score est inférieur à 70/100, le niveau détecté NE PEUT PAS être supérieur au niveau visé (${exam.targetLevel}).
-        3. Calcule un score sur 100 (sois exigeant, les fautes de base pénalisent lourdement).
+        4. Calcule un score sur 100 (sois exigeant, les fautes de base pénalisent lourdement).
            - Si "AUCUNE RÉPONSE", comptez 0 pour cette question.
-        4. Donne un feedback constructif et professionnel en "${explanationLang}". 
+        5. Évalue 5 critères spécifiques sur 100 :
+           - grammar (Grammaire et Syntaxe)
+           - vocabulary (Richesse Lexicale)
+           - comprehension (Compréhension Écrite et Orale)
+           - fluency (Fluidité et Cohérence)
+           - pronunciation (Prononciation - mettez 0 si aucune épreuve orale n'est présente)
+        6. Donne un feedback constructif et professionnel en "${explanationLang}". 
            - Le ton doit être académique, objectif et encourageant.
+           - Fournis un feedback global dans 'feedback'.
+           - Fournis un feedback spécifique court (1-2 phrases) pour chaque critère dans 'criteriaFeedback'.
            - Si l'étudiant réussit (>= 70), félicite-le de manière formelle.
-           - Si l'étudiant échoue (< 70), explique-lui clairement les lacunes (grammaire, vocabulaire, compréhension) et donne-lui un plan d'action.
-           - FORMAT DU FEEDBACK : Le texte DOIT être aéré. Utilise le caractère spécial '\\n' pour faire des sauts de ligne dans la chaîne JSON.
-        5. Ne mentionne jamais que tu es une IA. Parle en tant que "Jury d'Examen TeacherMada".
+           - Si l'étudiant échoue (< 70), explique-lui clairement les lacunes et donne-lui un plan d'action.
+        7. Ne mentionne jamais que tu es une IA. Parle en tant que "Jury d'Examen TeacherMada".
         
         Output JSON.
         `;
+
+        parts.unshift({ text: promptText });
 
         try {
             const schema = {
@@ -292,6 +365,26 @@ export const SmartExamService = {
                             speaking: { type: "NUMBER" }
                         }
                     },
+                    criteriaScores: {
+                        type: "OBJECT",
+                        properties: {
+                            grammar: { type: "NUMBER" },
+                            vocabulary: { type: "NUMBER" },
+                            comprehension: { type: "NUMBER" },
+                            fluency: { type: "NUMBER" },
+                            pronunciation: { type: "NUMBER" }
+                        }
+                    },
+                    criteriaFeedback: {
+                        type: "OBJECT",
+                        properties: {
+                            grammar: { type: "STRING" },
+                            vocabulary: { type: "STRING" },
+                            comprehension: { type: "STRING" },
+                            fluency: { type: "STRING" },
+                            pronunciation: { type: "STRING" }
+                        }
+                    },
                     detectedLevel: { type: "STRING" },
                     feedback: { type: "STRING" },
                     confidenceScore: { type: "NUMBER" }
@@ -300,7 +393,7 @@ export const SmartExamService = {
 
             const data = await callGeminiFunction('generate_json', {
                 model: TEXT_MODEL,
-                contents: prompt,
+                contents: parts,
                 config: {
                     responseSchema: schema
                 }

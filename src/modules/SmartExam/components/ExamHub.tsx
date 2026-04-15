@@ -4,7 +4,7 @@ import { UserProfile } from '../../../types';
 import { SmartExam, ExamResultDetailed, ExamType } from '../types';
 import { SmartExamService } from '../SmartExamService';
 import { CREDIT_COSTS } from '../../../services/creditService';
-import { Loader2, ShieldCheck, FileText, AlertTriangle, CheckCircle, XCircle, Clock, Award, Lock, ChevronDown, ChevronUp } from 'lucide-react';
+import { Loader2, ShieldCheck, FileText, AlertTriangle, CheckCircle, XCircle, Clock, Award, Lock, ChevronDown, ChevronUp, Mic, ArrowRight } from 'lucide-react';
 import ExamRunner from './ExamRunner';
 import ExamResult from './ExamResult';
 import { useTranslation } from '../../../contexts/LanguageContext';
@@ -14,8 +14,89 @@ interface Props {
     onClose: () => void;
     onUpdateUser: (u: UserProfile) => void;
     onShowPayment: () => void;
-    notify: (message: string, type?: 'success' | 'error' | 'info') => void;
+    notify: (message: React.ReactNode, type?: 'success' | 'error' | 'info') => void;
 }
+
+const MicTest: React.FC<{ notify: (m: React.ReactNode, t?: 'success' | 'error') => void }> = ({ notify }) => {
+    const { t } = useTranslation();
+    const [status, setStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+
+    const testMic = async () => {
+        setStatus('testing');
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(track => track.stop());
+            setStatus('success');
+            notify(t('exam_runner.mic_test_success') || "Microphone OK !", 'success');
+        } catch (e: any) {
+            console.error("Mic test error:", e);
+            setStatus('error');
+            
+            // Check if we are in an iframe
+            const isIframe = window.self !== window.top;
+            
+            let errorMsg = (e.name === 'NotAllowedError' || e.message?.includes('denied'))
+                ? t('exam_runner.mic_access_denied')
+                : t('exam_runner.mic_permission_error');
+                
+            if (isIframe && (e.name === 'NotAllowedError' || e.message?.includes('denied'))) {
+                errorMsg = "L'accès au micro est bloqué par la sécurité de l'aperçu. Veuillez ouvrir l'application dans un nouvel onglet pour utiliser le micro.";
+            }
+            
+            notify(errorMsg, 'error');
+        }
+    };
+
+    const openInNewTab = () => {
+        window.open(window.location.href, '_blank');
+    };
+
+    return (
+        <div className="flex flex-col gap-3">
+            <div className="flex gap-2">
+                <button
+                    onClick={testMic}
+                    disabled={status === 'testing'}
+                    className={`flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg font-bold transition-all ${
+                        status === 'success' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                        status === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                        'bg-indigo-600 text-white hover:bg-indigo-700'
+                    }`}
+                >
+                    {status === 'testing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mic className="w-4 h-4" />}
+                    {status === 'success' ? t('exam_runner.mic_test_success') : 
+                     status === 'error' ? t('exam_runner.mic_test_fail') : 
+                     t('exam_runner.mic_test_btn')}
+                </button>
+                
+                {status === 'error' && (
+                    <button
+                        onClick={openInNewTab}
+                        className="p-2 bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400 rounded-lg hover:bg-indigo-200 transition-colors"
+                        title="Ouvrir dans un nouvel onglet"
+                    >
+                        <ArrowRight className="w-5 h-5" />
+                    </button>
+                )}
+            </div>
+
+            {status === 'error' && (
+                <div className="bg-red-50 dark:bg-red-900/10 p-3 rounded-lg border border-red-100 dark:border-red-900/30">
+                    <p className="text-[10px] text-red-600 dark:text-red-400 leading-tight mb-2">
+                        {t('exam_runner.mic_troubleshoot')}
+                    </p>
+                    <button 
+                        onClick={openInNewTab}
+                        className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 underline hover:no-underline flex items-center gap-1"
+                    >
+                        <ArrowRight className="w-3 h-3" />
+                        Ouvrir l'application dans un nouvel onglet pour corriger ce problème
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+};
 
 const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment, notify }) => {
     const { t, setLanguage } = useTranslation();
@@ -226,6 +307,12 @@ const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment, 
                                     icon: <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />,
                                     title: `${t('common.credits') || "Crédits"} (${pendingExamType === 'certification' ? CREDIT_COSTS.EXAM : CREDIT_COSTS.DIAGNOSTIC})`,
                                     desc: `${pendingExamType === 'certification' ? CREDIT_COSTS.EXAM : CREDIT_COSTS.DIAGNOSTIC} ${t('exam.rule_credits_desc') || "crédits seront déduits dès le lancement. Aucun remboursement en cas d'abandon ou d'annulation."}`
+                                },
+                                {
+                                    id: 'mic_test',
+                                    icon: <Mic className="w-5 h-5 text-rose-500 shrink-0" />,
+                                    title: t('exam_runner.mic_test_title') || "Test du Microphone",
+                                    desc: t('exam_runner.mic_test_desc') || "Vérifiez que votre micro fonctionne avant de commencer."
                                 }
                             ].map((rule) => (
                                 <div key={rule.id} className="bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 overflow-hidden transition-all">
@@ -243,6 +330,11 @@ const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment, 
                                         <div className="px-4 pb-4 pt-0 text-sm text-slate-600 dark:text-slate-400 animate-fade-in">
                                             <div className="pl-8 border-l-2 border-slate-200 dark:border-slate-700 ml-2.5 py-1">
                                                 {rule.desc}
+                                                {rule.id === 'mic_test' && (
+                                                    <div className="mt-4">
+                                                        <MicTest notify={notify} />
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     )}

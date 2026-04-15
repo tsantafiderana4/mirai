@@ -50,7 +50,12 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
     const [isListening, setIsListening] = useState(false);
     const audioCtxRef = useRef<AudioContext | null>(null);
     const recognitionRef = useRef<any>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const audioChunksRef = useRef<Blob[]>([]);
     const [history, setHistory] = useState<string[]>([]);
+    const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+    const [recordingTime, setRecordingTime] = useState(0);
+    const recordingTimerRef = useRef<number | null>(null);
     
     // Prevent double submission
     const isSubmittingRef = useRef(false);
@@ -83,6 +88,24 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
     // Speech Recognition Effect
     useEffect(() => {
         if (!hasStarted) return;
+
+        // Anti-cheat: Tab switching detection
+        const handleVisibilityChange = () => {
+            if (document.hidden && !isSubmittingRef.current) {
+                setWarnings(prev => {
+                    const newWarnings = prev + 1;
+                    if (newWarnings >= 3) {
+                        toast.error(t('exam_runner.exam_failed_cheat'));
+                        handleSubmit();
+                    } else {
+                        toast.error(t('exam_runner.tab_switch_warning', { count: newWarnings }));
+                    }
+                    return newWarnings;
+                });
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
 
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (SpeechRecognition) {
@@ -134,7 +157,7 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                         if (final) {
                              return {
                                 ...prev,
-                                [currentSection.id]: (currentText + ' ' + final).replace(/\s+/g, ' ').trim()
+                                [activeQuestionId]: (currentText + ' ' + final).replace(/\s+/g, ' ').trim()
                             };
                         }
                         return prev;
@@ -160,13 +183,23 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
         }
         
         return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
             if (recognitionRef.current) {
                 recognitionRef.current.stop();
             }
         };
     }, [currentSection.id, exam.language, hasStarted]);
 
-    const toggleListening = () => {
+    const toggleListening = async (questionId: string) => {
+        if (currentSection.type === 'speaking') {
+            if (isRecordingAudio) {
+                stopAudioRecording();
+            } else {
+                startAudioRecording(questionId);
+            }
+            return;
+        }
+
         if (!recognitionRef.current) {
             toast.error(t('exam_runner.dictation_not_supported'));
             return;
@@ -176,41 +209,106 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
             setIsListening(false);
         } else {
             try {
+                // Request microphone permission explicitly first to avoid 'not-allowed' error in some browsers/iframes
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(track => track.stop());
+
                 recognitionRef.current.start();
                 setIsListening(true);
                 // Save current state to history before starting new dictation
-                setHistory(prev => [...prev, answers[currentSection.id] || '']);
-            } catch (e) {
-                console.error(e);
-                toast.error(t('exam_runner.mic_permission_error'));
+                setHistory(prev => [...prev, answers[questionId] || '']);
+            } catch (e: any) {
+                console.error("Microphone permission error:", e);
+                const isIframe = window.self !== window.top;
+                
+                if (e.name === 'NotAllowedError' || e.message?.includes('denied')) {
+                    const msg = isIframe 
+                        ? "L'accès au micro est bloqué par l'aperçu. Cliquez sur le bouton 'Ouvrir dans un nouvel onglet' en haut à droite pour corriger cela."
+                        : t('exam_runner.mic_access_denied');
+                    toast.error(msg);
+                } else {
+                    toast.error(t('exam_runner.mic_permission_error'));
+                }
             }
         }
     };
 
-    const handleUndo = () => {
+    const startAudioRecording = async (questionId: string) => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mediaRecorder = new MediaRecorder(stream);
+            mediaRecorderRef.current = mediaRecorder;
+            audioChunksRef.current = [];
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) {
+                    audioChunksRef.current.push(e.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
+                const reader = new FileReader();
+                reader.readAsDataURL(audioBlob);
+                reader.onloadend = () => {
+                    const base64data = reader.result as string;
+                    setAnswers(prev => ({ ...prev, [questionId]: base64data }));
+                };
+                stream.getTracks().forEach(track => track.stop());
+            };
+
+            mediaRecorder.start();
+            setIsRecordingAudio(true);
+            setRecordingTime(0);
+            recordingTimerRef.current = window.setInterval(() => {
+                setRecordingTime(prev => {
+                    if (prev >= 59) {
+                        stopAudioRecording();
+                        return 60;
+                    }
+                    return prev + 1;
+                });
+            }, 1000);
+        } catch (err) {
+            console.error("Error accessing microphone", err);
+            toast.error(t('exam_runner.mic_permission_error'));
+        }
+    };
+
+    const stopAudioRecording = () => {
+        if (mediaRecorderRef.current && isRecordingAudio) {
+            mediaRecorderRef.current.stop();
+            setIsRecordingAudio(false);
+            if (recordingTimerRef.current) {
+                clearInterval(recordingTimerRef.current);
+            }
+        }
+    };
+
+    const handleUndo = (questionId: string) => {
         setHistory(prev => {
             if (prev.length === 0) return prev;
             const newHistory = [...prev];
             const lastState = newHistory.pop();
-            setAnswers(a => ({ ...a, [currentSection.id]: lastState || '' }));
+            setAnswers(a => ({ ...a, [questionId]: lastState || '' }));
             return newHistory;
         });
     };
 
-    const handleRetrySpeaking = () => {
+    const handleRetrySpeaking = (questionId: string) => {
         if (isListening && recognitionRef.current) {
             recognitionRef.current.stop();
             setIsListening(false);
         }
-        setHistory(prev => [...prev, answers[currentSection.id] || '']);
-        setAnswers(prev => ({ ...prev, [currentSection.id]: '' }));
+        setHistory(prev => [...prev, answers[questionId] || '']);
+        setAnswers(prev => ({ ...prev, [questionId]: '' }));
         toast.info(t('exam_runner.confirm_reset') || "Réponse réinitialisée.");
     };
 
-    const handleManualChange = (val: string) => {
+    const handleManualChange = (questionId: string, val: string) => {
         // Only save to history on debounce or significant change? 
         // For now, let's just update state. Undo is mainly for "bulk" actions like dictation.
-        setAnswers(prev => ({ ...prev, [currentSection.id]: val }));
+        setAnswers(prev => ({ ...prev, [questionId]: val }));
     };
 
     useEffect(() => {
@@ -336,13 +434,27 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
         return () => clearInterval(timer);
     }, [hasStarted]);
 
-    const handleAnswer = (val: string) => {
-        setAnswers(prev => ({ ...prev, [currentSection.id]: val }));
+    const questionsToRender = currentSection.questions && currentSection.questions.length > 0 
+        ? currentSection.questions.map((q, i) => ({ ...q, id: q.id || `${currentSection.id}_q${i}` }))
+        : [{ id: currentSection.id, question: currentSection.question || '', options: currentSection.options }];
+
+    const activeQuestionId = questionsToRender[0].id;
+
+    const handleAnswer = (questionId: string, val: string) => {
+        setAnswers(prev => ({ ...prev, [questionId]: val }));
     };
 
     const handleNext = () => {
+        // Check if all rendered questions have answers
+        const allAnswered = questionsToRender.every(q => answers[q.id] && answers[q.id].trim() !== '');
+        if (!allAnswered) {
+            toast.error(t('exam_runner.answer_required'));
+            return;
+        }
+
         if (currentSectionIndex < exam.sections.length - 1) {
             setCurrentSectionIndex(prev => prev + 1);
+            setHistory([]);
         } else {
             handleSubmit();
         }
@@ -409,7 +521,7 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                                     <Mic className="w-5 h-5 text-rose-500" />
                                     <h3 className="font-bold text-slate-800 dark:text-slate-200">{t('exam_runner.mic_title')}</h3>
                                 </div>
-                                <p className="text-sm text-slate-500">{t('exam_runner.mic_desc')}</p>
+                                <p className="text-sm text-slate-500">{t('exam_runner.mic_instruction')}</p>
                             </div>
                         </div>
 
@@ -536,118 +648,126 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                                 {currentSection.context}
                             </div>
                         )}
-
-                        <h2 className="text-xl font-black text-slate-900 dark:text-white leading-relaxed mb-6">
-                            {currentSection.question}
-                        </h2>
                     </div>
 
-                    {(currentSection.type === 'qcm' || currentSection.type === 'listening') && currentSection.options && (
-                        <div className="space-y-3">
-                            {currentSection.options.map((opt, idx) => (
-                                <button
-                                    key={idx}
-                                    onClick={() => handleAnswer(opt)}
-                                    className={`w-full p-5 text-left rounded-xl border-2 transition-all ${
-                                        answers[currentSection.id] === opt
-                                        ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-800 dark:text-indigo-300 shadow-md'
-                                        : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200'
-                                    }`}
-                                >
-                                    <span className="font-bold mr-3">{String.fromCharCode(65 + idx)}.</span> {opt}
-                                </button>
-                            ))}
-                        </div>
-                    )}
+                    <div className="space-y-12 w-full">
+                        {questionsToRender.map((q, idx) => (
+                            <div key={q.id} className="w-full">
+                                <h2 className="text-xl font-black text-slate-900 dark:text-white leading-relaxed mb-6">
+                                    {questionsToRender.length > 1 ? `${idx + 1}. ` : ''}{q.question}
+                                </h2>
 
-                    {(currentSection.type === 'writing' || currentSection.type === 'speaking') && (
-                        <div className="space-y-4">
-                            <div className="relative">
-                                {currentSection.type === 'speaking' && (
-                                    <div className="absolute top-2 right-2 z-10 flex gap-2">
-                                        <button
-                                            onClick={handleUndo}
-                                            disabled={history.length === 0}
-                                            className="p-2 text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
-                                            title="Annuler la dernière action"
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
-                                            {t('exam_runner.undo')}
-                                        </button>
-                                    </div>
-                                )}
-                                <textarea
-                                    value={answers[currentSection.id] || ''}
-                                    onChange={(e) => handleManualChange(e.target.value)}
-                                    placeholder={currentSection.type === 'speaking' ? t('exam_runner.speaking_placeholder') : t('exam_runner.writing_placeholder')}
-                                    readOnly={currentSection.type === 'speaking' && isListening}
-                                    className={`w-full h-64 p-5 pb-16 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 focus:border-indigo-500 outline-none resize-none text-slate-800 dark:text-white leading-relaxed ${currentSection.type === 'speaking' && isListening ? 'cursor-not-allowed bg-slate-50 dark:bg-slate-900/50' : ''}`}
-                                />
-                                
-                                {currentSection.type === 'speaking' ? (
-                                    <div className="absolute bottom-4 right-4 flex gap-2">
-                                        {answers[currentSection.id] && !isListening && (
+                                {(q.type === 'qcm' || q.type === 'true_false_not_given' || (!q.type && q.options && q.options.length > 0)) ? (
+                                    <div className="space-y-3">
+                                        {q.options?.map((opt, optIdx) => (
                                             <button
-                                                onClick={handleRetrySpeaking}
-                                                className="p-2 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 dark:bg-slate-700 dark:hover:bg-slate-600 dark:text-slate-300 transition-colors"
-                                                title={t('exam_runner.clear_all')}
+                                                key={optIdx}
+                                                onClick={() => handleAnswer(q.id, opt)}
+                                                className={`w-full p-5 text-left rounded-xl border-2 transition-all ${
+                                                    answers[q.id] === opt
+                                                    ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-800 dark:text-indigo-300 shadow-md'
+                                                    : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                                                }`}
                                             >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+                                                <span className="font-bold mr-3">{String.fromCharCode(65 + optIdx)}.</span> {opt}
                                             </button>
-                                        )}
-                                        <button
-                                            onClick={toggleListening}
-                                            className={`flex items-center gap-2 px-4 py-2 rounded-full shadow-lg transition-all font-bold text-sm ${
-                                                isListening 
-                                                ? 'bg-red-500 text-white animate-pulse hover:bg-red-600 ring-4 ring-red-200 dark:ring-red-900/50' 
-                                                : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105'
-                                            }`}
-                                            title={isListening ? t('exam_runner.stop_recording') : t('exam_runner.start_recording')}
-                                        >
-                                            {isListening ? (
-                                                <>
-                                                    <MicOff className="w-4 h-4" />
-                                                    <span>{t('exam_runner.stop')}</span>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <Mic className="w-4 h-4" />
-                                                    <span>{t('exam_runner.speak_here')}</span>
-                                                </>
-                                            )}
-                                        </button>
+                                        ))}
+                                    </div>
+                                ) : q.type === 'fill_in_the_blanks' ? (
+                                    <div className="w-full">
+                                        <input
+                                            type="text"
+                                            value={answers[q.id] || ''}
+                                            onChange={(e) => handleManualChange(q.id, e.target.value)}
+                                            placeholder={t('exam_runner.fill_blank_placeholder')}
+                                            className="w-full p-4 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 focus:border-indigo-500 outline-none text-slate-800 dark:text-white"
+                                        />
                                     </div>
                                 ) : (
-                                    <button
-                                        onClick={toggleListening}
-                                        className={`absolute bottom-4 right-4 flex items-center gap-2 px-4 py-2 rounded-full shadow-lg transition-all font-bold text-sm ${
-                                            isListening 
-                                            ? 'bg-red-500 text-white animate-pulse hover:bg-red-600 ring-4 ring-red-200 dark:ring-red-900/50' 
-                                            : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105'
-                                        }`}
-                                        title={isListening ? t('exam_runner.stop_dictation') : t('exam_runner.start_dictation')}
-                                    >
-                                        {isListening ? (
-                                            <>
-                                                <MicOff className="w-4 h-4" />
-                                                <span>{t('exam_runner.recording')}</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Mic className="w-4 h-4" />
-                                                <span>{t('exam_runner.dictation')}</span>
-                                            </>
+                                    <div className="space-y-4">
+                                        <div className="relative">
+                                            {currentSection.type === 'speaking' ? (
+                                                <div className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800/50">
+                                                    {answers[q.id] && answers[q.id].startsWith('data:audio') ? (
+                                                        <div className="flex flex-col items-center gap-4 w-full">
+                                                            <audio src={answers[q.id]} controls className="w-full max-w-md" />
+                                                            <button
+                                                                onClick={() => setAnswers(prev => ({ ...prev, [q.id]: '' }))}
+                                                                className="px-4 py-2 text-sm font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+                                                            >
+                                                                {t('exam_runner.retake_audio')}
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex flex-col items-center gap-6">
+                                                            <div className={`w-24 h-24 rounded-full flex items-center justify-center transition-all ${isRecordingAudio ? 'bg-red-100 dark:bg-red-900/30 animate-pulse' : 'bg-indigo-100 dark:bg-indigo-900/30'}`}>
+                                                                <Mic className={`w-10 h-10 ${isRecordingAudio ? 'text-red-500' : 'text-indigo-500'}`} />
+                                                            </div>
+                                                            
+                                                            {isRecordingAudio && (
+                                                                <div className="text-2xl font-mono font-bold text-red-500">
+                                                                    00:{recordingTime.toString().padStart(2, '0')} / 01:00
+                                                                </div>
+                                                            )}
+
+                                                            <button
+                                                                onClick={() => toggleListening(q.id)}
+                                                                className={`px-8 py-4 rounded-full font-bold text-white shadow-lg transition-all transform hover:scale-105 ${
+                                                                    isRecordingAudio 
+                                                                    ? 'bg-red-500 hover:bg-red-600 ring-4 ring-red-200 dark:ring-red-900/50' 
+                                                                    : 'bg-indigo-600 hover:bg-indigo-700'
+                                                                }`}
+                                                            >
+                                                                {isRecordingAudio ? t('exam_runner.stop_recording') : t('exam_runner.start_recording')}
+                                                            </button>
+                                                            <p className="text-sm text-slate-500 max-w-xs text-center">
+                                                                {t('exam_runner.speaking_instruction')}
+                                                            </p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <textarea
+                                                        value={answers[q.id] || ''}
+                                                        onChange={(e) => handleManualChange(q.id, e.target.value)}
+                                                        placeholder={t('exam_runner.writing_placeholder')}
+                                                        className="w-full h-64 p-5 pb-16 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 focus:border-indigo-500 outline-none resize-none text-slate-800 dark:text-white leading-relaxed"
+                                                    />
+                                                    <button
+                                                        onClick={() => toggleListening(q.id)}
+                                                        className={`absolute bottom-4 right-4 flex items-center gap-2 px-4 py-2 rounded-full shadow-lg transition-all font-bold text-sm ${
+                                                            isListening 
+                                                            ? 'bg-red-500 text-white animate-pulse hover:bg-red-600 ring-4 ring-red-200 dark:ring-red-900/50' 
+                                                            : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105'
+                                                        }`}
+                                                        title={isListening ? t('exam_runner.stop_dictation') : t('exam_runner.start_dictation')}
+                                                    >
+                                                        {isListening ? (
+                                                            <>
+                                                                <MicOff className="w-4 h-4" />
+                                                                <span>{t('exam_runner.stop')}</span>
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <Mic className="w-4 h-4" />
+                                                                <span>{t('exam_runner.dictate')}</span>
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
+                                        {currentSection.type === 'speaking' && (
+                                            <p className="text-xs text-slate-500 italic flex items-center gap-1">
+                                                <AlertCircle className="w-3 h-3"/> {t('exam_runner.speaking_mode_note')}
+                                            </p>
                                         )}
-                                    </button>
+                                    </div>
                                 )}
                             </div>
-                            {currentSection.type === 'speaking' && (
-                                <p className="text-xs text-slate-500 italic flex items-center gap-1">
-                                    <AlertCircle className="w-3 h-3"/> {t('exam_runner.speaking_mode_note')}
-                                </p>
-                            )}
-                        </div>
-                    )}
+                        ))}
+                    </div>
                 </div>
             </div>
 
@@ -655,7 +775,7 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
             <div className="p-6 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex justify-end">
                 <button
                     onClick={handleNext}
-                    disabled={!answers[currentSection.id]}
+                    disabled={!questionsToRender.every(q => answers[q.id] && answers[q.id].trim() !== '')}
                     className="px-8 py-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-lg flex items-center gap-2 transition-all"
                 >
                     {currentSectionIndex < exam.sections.length - 1 ? t('exam_runner.next') : t('exam_runner.finish')}

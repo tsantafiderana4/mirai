@@ -153,10 +153,10 @@ const AppContent: React.FC = () => {
       return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
-  const notify = (msg: string, type: string = 'info') => {
-    if (type === 'error') toast.error(msg);
-    else if (type === 'success') toast.success(msg);
-    else toast.info(msg);
+  const notify = (msg: React.ReactNode, type: string = 'info') => {
+    if (type === 'error') toast.error(msg as any);
+    else if (type === 'success') toast.success(msg as any);
+    else toast.info(msg as any);
   };
 
   const handleAuthSuccess = async (u: UserProfile) => {

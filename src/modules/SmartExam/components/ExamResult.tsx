@@ -156,6 +156,51 @@ const ExamResult: React.FC<Props> = ({ result, user, onClose, initialShowCert = 
                             })}
                         </div>
 
+                        {result.criteriaScores && (
+                            <>
+                                <h3 className="text-lg font-black text-slate-900 dark:text-white mb-6 flex items-center gap-2">
+                                    Critères d'évaluation détaillés
+                                </h3>
+                                <div className="space-y-4 mb-10">
+                                    {Object.entries(result.criteriaScores).map(([criterion, score]) => {
+                                        const criterionNames: Record<string, string> = {
+                                            grammar: "Grammaire et Syntaxe",
+                                            vocabulary: "Richesse Lexicale",
+                                            comprehension: "Compréhension",
+                                            fluency: "Fluidité et Cohérence",
+                                            pronunciation: "Prononciation"
+                                        };
+                                        const feedback = result.criteriaFeedback?.[criterion as keyof typeof result.criteriaFeedback];
+                                        
+                                        // Skip pronunciation if it's 0 (meaning no speaking test)
+                                        if (criterion === 'pronunciation' && score === 0) return null;
+
+                                        return (
+                                            <div key={criterion} className="p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-700">
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <div className="font-bold text-slate-800 dark:text-slate-200">{criterionNames[criterion] || criterion}</div>
+                                                    <div className={`font-black ${score >= 70 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                                                        {score}/100
+                                                    </div>
+                                                </div>
+                                                <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden mb-3">
+                                                    <div 
+                                                        className={`h-full rounded-full ${score >= 70 ? 'bg-emerald-500' : 'bg-amber-500'}`} 
+                                                        style={{ width: `${score}%` }}
+                                                    ></div>
+                                                </div>
+                                                {feedback && (
+                                                    <p className="text-sm text-slate-600 dark:text-slate-400 italic">
+                                                        "{feedback}"
+                                                    </p>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </>
+                        )}
+
                         <div className={`p-6 md:p-8 rounded-3xl border mb-10 ${result.passed ? 'bg-emerald-50 dark:bg-emerald-900/10 border-emerald-100 dark:border-emerald-900/30' : 'bg-amber-50 dark:bg-amber-900/10 border-amber-100 dark:border-amber-900/30'}`}>
                             <div className="flex items-center gap-3 mb-4">
                                 <img src="https://i.ibb.co/B2XmRwmJ/logo.png" className="w-10 h-10 rounded-full shadow-sm" />

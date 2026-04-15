@@ -11,7 +11,7 @@ interface DialogueSessionProps {
   user: UserProfile;
   onClose: () => void;
   onUpdateUser: (user: UserProfile) => void;
-  notify: (message: string, type: 'success' | 'error' | 'info') => void;
+  notify: (message: React.ReactNode, type: 'success' | 'error' | 'info') => void;
   onShowPayment: () => void; // Added Prop
 }
 
@@ -178,7 +178,7 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
       }
   };
 
-  const handleMicClick = () => {
+  const handleMicClick = async () => {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (!SpeechRecognition) {
           notify("Votre navigateur ne supporte pas la reconnaissance vocale.", 'error');
@@ -187,6 +187,37 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
 
       if (isListening) {
           setIsListening(false);
+          return;
+      }
+
+      try {
+          // Request microphone permission explicitly first to avoid 'not-allowed' error
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach(track => track.stop());
+      } catch (e: any) {
+          console.error("Microphone permission error:", e);
+          const isIframe = window.self !== window.top;
+          
+          if (e.name === 'NotAllowedError' || e.message?.includes('denied')) {
+              const msg = isIframe 
+                ? "L'accès au micro est bloqué par l'aperçu. Veuillez ouvrir l'application dans un nouvel onglet (bouton en haut à droite) pour utiliser le micro."
+                : "Accès au microphone refusé. Veuillez autoriser le micro dans les paramètres de votre navigateur.";
+                
+              notify(
+                <div className="flex flex-col gap-2">
+                    <span>{msg}</span>
+                    <button 
+                        onClick={() => window.open(window.location.href, '_blank')}
+                        className="text-xs font-bold underline flex items-center gap-1"
+                    >
+                        Ouvrir dans un nouvel onglet maintenant
+                    </button>
+                </div>, 
+                'error'
+              );
+          } else {
+              notify("Impossible d'accéder au microphone. Vérifiez les permissions de votre navigateur.", 'error');
+          }
           return;
       }
 
