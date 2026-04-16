@@ -141,10 +141,10 @@ Deno.serve(async (req) => {
     }
 
     // Fonction de rotation intelligente (Modèles + Clés)
-    async function fetchWithSmartRotation(endpoint: string, payload: any, availableKeys: string[], requestedModel: string, actionType: string = 'text') {
+    async function fetchWithSmartRotation(endpoint: string, payload: unknown, availableKeys: string[], requestedModel: string, actionType: string = 'text') {
         const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
         // Chaîne de fallback par défaut
-        let defaultChain = ['gemini-3-flash-preview', 'gemini-3.1-flash-preview', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+        let defaultChain = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-3.1-flash-preview', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'];
         
         if (actionType === 'audio') {
             defaultChain = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts-001', 'gemini-2.5-pro-tts-001', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'];
@@ -262,7 +262,7 @@ Deno.serve(async (req) => {
                                     const data = JSON.parse(jsonStr)
                                     const text = data.candidates?.[0]?.content?.parts?.[0]?.text
                                     if (text) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`))
-                                } catch (e) {
+                                } catch {
                                     // Ignore parse errors for individual chunks
                                 }
                             }

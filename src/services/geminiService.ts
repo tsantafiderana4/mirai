@@ -115,7 +115,7 @@ const incrementSupportUsage = () => {
 // --- SERVICES EXPORTÉS ---
 
 // Nouvelle fonction pour facturer le LiveTeacher
-export const chargeVoiceMinute = async (userId: string): Promise<boolean> => {
+export const chargeVoiceMinute = async (): Promise<boolean> => {
     try {
         const { data: newCredits, error: rpcError } = await supabase.rpc('consume_credits', { 
             p_amount: CREDIT_COSTS.VOICE_CALL_PER_MINUTE
@@ -140,7 +140,14 @@ export const chargeVoiceMinute = async (userId: string): Promise<boolean> => {
 };
 
 // Modèles par défaut
-export const TEXT_MODEL = 'gemini-3-flash-preview';
+export const TEXT_MODELS = [
+    'gemini-3-flash-preview',
+    'gemini-2.5-flash',
+    'gemini-3.1-flash-preview',
+    'gemini-2.5-flash-lite',
+    'gemini-1.5-flash'
+];
+export const TEXT_MODEL = TEXT_MODELS[0];
 export const AUDIO_MODEL = 'gemini-2.5-flash-preview-tts';
 
 // --- SERVICES EXPORTÉS ---
@@ -157,32 +164,35 @@ export const generateSupportResponse = async (
         return "⛔ Quota journalier d'aide atteint (100/100). Revenez demain.";
     }
 
-    let apiKey = '';
-    try {
-        const systemInstruction = SUPPORT_AGENT_PROMPT(context, user);
-        
-        const prompt = `Historique de conversation:\n${history.map(h => `${h.role}: ${h.text}`).join('\n')}\n\nQuestion actuelle: ${userQuery}`;
+    const systemInstruction = SUPPORT_AGENT_PROMPT(context, user);
+    const prompt = `Historique de conversation:\n${history.map(h => `${h.role}: ${h.text}`).join('\n')}\n\nQuestion actuelle: ${userQuery}`;
 
-        apiKey = await getGeminiApiKey();
-        const ai = new GoogleGenAI({ apiKey });
+    for (const model of TEXT_MODELS) {
+        let apiKey = '';
+        try {
+            apiKey = await getGeminiApiKey();
+            const ai = new GoogleGenAI({ apiKey });
 
-        const response = await ai.models.generateContent({
-            model: TEXT_MODEL,
-            contents: prompt,
-            config: {
-                systemInstruction: systemInstruction,
-                maxOutputTokens: 2000, 
-                temperature: 0.5
-            }
-        });
-        
-        incrementSupportUsage();
-        return response.text || "Je n'ai pas de réponse pour le moment.";
-    } catch (e) {
-        if (apiKey) reportFailedApiKey(apiKey);
-        console.error("Support error:", e);
-        return "Désolé, je rencontre un problème technique momentané. Veuillez réessayer.";
+            const response = await ai.models.generateContent({
+                model: model,
+                contents: prompt,
+                config: {
+                    systemInstruction: systemInstruction,
+                    maxOutputTokens: 2000, 
+                    temperature: 0.5
+                }
+            });
+            
+            incrementSupportUsage();
+            return response.text || "Je n'ai pas de réponse pour le moment.";
+        } catch (e) {
+            if (apiKey) reportFailedApiKey(apiKey);
+            console.warn(`Support error with model ${model}:`, e);
+            // Continue to next model
+        }
     }
+    
+    return "Désolé, je rencontre un problème technique momentané. Veuillez réessayer.";
 };
 
 // 2. MAIN CHAT (STREAMING VIA SDK)
@@ -194,8 +204,6 @@ export async function* sendMessageStream(
 ) {
   if (!user.preferences) throw new Error("Profil incomplet");
 
-  console.log("[Gemini] Stream started via SDK. Model:", TEXT_MODEL);
-
   // OPTIMIZATION: Limit history to last 15 messages to reduce latency and token usage
   const recentHistory = history.slice(-15);
 
@@ -206,45 +214,64 @@ export async function* sendMessageStream(
     .join('\n\n');
 
   const finalMessage = contextPrompt ? `Contexte précédent:\n${contextPrompt}\n\nNouveau message de l'élève: ${message}` : message;
-  
-  let apiKey = '';
-  try {
-      apiKey = await getGeminiApiKey();
-      const ai = new GoogleGenAI({ apiKey });
+  const systemInstruction = SYSTEM_PROMPT_TEMPLATE(user, user.preferences!, sessionType);
 
-      const responseStream = await ai.models.generateContentStream({
-          model: TEXT_MODEL,
-          contents: finalMessage,
-          config: {
-              systemInstruction: SYSTEM_PROMPT_TEMPLATE(user, user.preferences!, sessionType),
-              temperature: 0.7,
-              maxOutputTokens: 8192,
-          }
-      });
+  let success = false;
+  let lastError: Error | null = null;
 
-      for await (const chunk of responseStream) {
-          if (chunk.text) {
-              yield chunk.text;
-          }
-      }
-      
-      console.log("[Gemini] Stream completed successfully.");
+  for (const model of TEXT_MODELS) {
+    let apiKey = '';
+    try {
+        console.log(`[Gemini] Attempting stream with model: ${model}`);
+        apiKey = await getGeminiApiKey();
+        const ai = new GoogleGenAI({ apiKey });
 
-      // Deduct credits (1 credit for text generation)
-      const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
-      if (newCredits !== null) {
-          useAppStore.getState().updateUserCredits(newCredits);
-      }
+        const responseStream = await ai.models.generateContentStream({
+            model: model,
+            contents: finalMessage,
+            config: {
+                systemInstruction: systemInstruction,
+                temperature: 0.7,
+                maxOutputTokens: 8192,
+            }
+        });
 
-  } catch (e: any) {
-      if (apiKey) reportFailedApiKey(apiKey);
-      console.error("[Gemini] Stream exception:", e);
-      console.error("[Gemini] Error details:", JSON.stringify(e, Object.getOwnPropertyNames(e)));
-      if (e.message === "CREDITS_EXHAUSTED") {
-          yield "⛔ **Crédits épuisés.**\n\nVeuillez recharger votre compte pour continuer.";
-      } else {
-          yield "⚠️ Désolé, le service est temporairement indisponible. Veuillez réessayer dans un instant.";
-      }
+        for await (const chunk of responseStream) {
+            if (chunk.text) {
+                yield chunk.text;
+                success = true;
+            }
+        }
+        
+        if (success) {
+            console.log(`[Gemini] Stream completed successfully with model: ${model}`);
+            // Deduct credits (1 credit for text generation)
+            const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
+            if (newCredits !== null) {
+                useAppStore.getState().updateUserCredits(newCredits);
+            }
+            return; // Exit function on success
+        }
+    } catch (e: unknown) {
+        const error = e as Error;
+        if (apiKey) reportFailedApiKey(apiKey);
+        lastError = error;
+        console.warn(`[Gemini] Stream failed with model ${model}:`, error);
+        if (success) {
+            // If we already started yielding, we can't really retry with a different model easily
+            // without confusing the UI. So we just break.
+            break;
+        }
+        if (error.message === "CREDITS_EXHAUSTED") {
+            yield "⛔ **Crédits épuisés.**\n\nVeuillez recharger votre compte pour continuer.";
+            return;
+        }
+    }
+  }
+
+  if (!success) {
+      console.error("[Gemini] All models failed for stream.", lastError);
+      yield "⚠️ Désolé, le service est temporairement indisponible. Veuillez réessayer dans un instant.";
   }
 }
 
@@ -257,7 +284,7 @@ export const generateSpeech = async (text: string, voiceName: string = 'Kore'): 
     const getApiKey = async (): Promise<string> => {
         try {
             return await getGeminiApiKey();
-        } catch (e) {
+        } catch {
             return '';
         }
     };
@@ -330,50 +357,55 @@ export const generateSpeech = async (text: string, voiceName: string = 'Kore'): 
 };
 
 // 4. EXTRACTION VOCABULAIRE
-export const extractVocabulary = async (history: ChatMessage[]): Promise<any[]> => {
+export const extractVocabulary = async (history: ChatMessage[]): Promise<{ id: string; word: string; translation: string; example: string; mastered: boolean; addedAt: number }[]> => {
     const user = useAppStore.getState().user;
     if (!user) return [];
 
     const context = history.slice(-6).map(m => `${m.role}: ${m.text}`).join('\n');
     const prompt = `Based on the following conversation, extract 3 to 5 key vocabulary words. Return JSON array [{word, translation, example}].\n${context}`;
 
-    try {
-        const apiKey = await getGeminiApiKey();
-        const ai = new GoogleGenAI({ apiKey });
+    for (const model of TEXT_MODELS) {
+        let apiKey = '';
+        try {
+            apiKey = await getGeminiApiKey();
+            const ai = new GoogleGenAI({ apiKey });
 
-        const response = await ai.models.generateContent({
-            model: TEXT_MODEL,
-            contents: prompt,
-            config: {
-                responseMimeType: 'application/json',
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            word: { type: Type.STRING },
-                            translation: { type: Type.STRING },
-                            example: { type: Type.STRING }
+            const response = await ai.models.generateContent({
+                model: model,
+                contents: prompt,
+                config: {
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                        type: Type.ARRAY,
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                word: { type: Type.STRING },
+                                translation: { type: Type.STRING },
+                                example: { type: Type.STRING }
+                            }
                         }
                     }
                 }
-            }
-        });
+            });
 
-        const rawData = JSON.parse(response.text || "[]");
-        
-        return rawData.map((item: any) => ({
-            id: crypto.randomUUID(),
-            word: item.word,
-            translation: item.translation,
-            example: item.example,
-            mastered: false,
-            addedAt: Date.now()
-        }));
+            const rawData = JSON.parse(response.text || "[]");
+            
+            return rawData.map((item: { word: string; translation: string; example: string }) => ({
+                id: crypto.randomUUID(),
+                word: item.word,
+                translation: item.translation,
+                example: item.example,
+                mastered: false,
+                addedAt: Date.now()
+            }));
 
-    } catch (e) {
-        return [];
+        } catch (e: unknown) {
+            if (apiKey) reportFailedApiKey(apiKey);
+            console.warn(`extractVocabulary failed with model ${model}:`, e);
+        }
     }
+    return [];
 };
 
 // 5. EXERCICES
@@ -394,52 +426,55 @@ export const generateExerciseFromHistory = async (history: ChatMessage[], user: 
     
     Format JSON Array.`;
 
-    try {
-        // Deduct credits first (1 credit for exercise generation)
-        const newCredits = await deductCredits(CREDIT_COSTS.EXERCISE, user.id);
-        if (newCredits === null) {
-            throw new Error("CREDITS_EXHAUSTED");
-        }
-        useAppStore.getState().updateUserCredits(newCredits);
+    // Deduct credits first (1 credit for exercise generation)
+    const newCredits = await deductCredits(CREDIT_COSTS.EXERCISE, user.id);
+    if (newCredits === null) {
+        throw new Error("CREDITS_EXHAUSTED");
+    }
+    useAppStore.getState().updateUserCredits(newCredits);
 
-        const apiKey = await getGeminiApiKey();
-        const ai = new GoogleGenAI({ apiKey });
+    for (const model of TEXT_MODELS) {
+        let apiKey = '';
+        try {
+            apiKey = await getGeminiApiKey();
+            const ai = new GoogleGenAI({ apiKey });
 
-        const response = await ai.models.generateContent({
-            model: TEXT_MODEL,
-            contents: prompt,
-            config: {
-                responseMimeType: 'application/json',
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            id: { type: Type.STRING },
-                            type: { type: Type.STRING, enum: ["multiple_choice", "fill_blank", "true_false"] },
-                            question: { type: Type.STRING },
-                            options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                            correctAnswer: { type: Type.STRING },
-                            explanation: { type: Type.STRING }
-                        },
-                        required: ["type", "question", "correctAnswer", "explanation"]
+            const response = await ai.models.generateContent({
+                model: model,
+                contents: prompt,
+                config: {
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                        type: Type.ARRAY,
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                id: { type: Type.STRING },
+                                type: { type: Type.STRING, enum: ["multiple_choice", "fill_blank", "true_false"] },
+                                question: { type: Type.STRING },
+                                options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                                correctAnswer: { type: Type.STRING },
+                                explanation: { type: Type.STRING }
+                            },
+                            required: ["type", "question", "correctAnswer", "explanation"]
+                        }
                     }
                 }
-            }
-        });
-        
-        const exercises = JSON.parse(response.text || "[]");
-        return exercises.map((ex: any) => ({
-            ...ex,
-            id: ex.id || crypto.randomUUID()
-        }));
-    } catch (e: any) {
-        console.error("generateExerciseFromHistory error:", e);
-        if (e.message === "CREDITS_EXHAUSTED") {
-            throw new Error("CREDITS_EXHAUSTED");
+            });
+            
+            const exercises = JSON.parse(response.text || "[]");
+            return exercises.map((ex: { id?: string; type: string; question: string; options: string[]; correctAnswer: string; explanation: string }) => ({
+                ...ex,
+                id: ex.id || crypto.randomUUID()
+            }));
+        } catch (e: unknown) {
+            const error = e as Error;
+            if (apiKey) reportFailedApiKey(apiKey);
+            console.warn(`generateExerciseFromHistory failed with model ${model}:`, error);
+            if (error.message === "CREDITS_EXHAUSTED") throw error;
         }
-        return [];
     }
+    return [];
 };
 
 // 6. ROLEPLAY
@@ -447,8 +482,7 @@ export const generateRoleplayResponse = async (
     history: ChatMessage[],
     scenarioPrompt: string,
     user: UserProfile,
-    isClosing: boolean = false,
-    isInitial: boolean = false
+    isClosing: boolean = false
 ): Promise<{ aiReply: string; correction?: string; explanation?: string; score?: number; feedback?: string }> => {
     
     const sysInstruct = `Partenaire de jeu de rôle (${user.preferences?.targetLanguage}, ${user.preferences?.level}). Scénario: ${scenarioPrompt}.`;
@@ -460,59 +494,69 @@ export const generateRoleplayResponse = async (
         
     const finalPrompt = isClosing ? `${contextPrompt}\n\nÉvaluation finale` : (contextPrompt || "Start");
 
-    try {
-        const apiKey = await getGeminiApiKey();
-        const ai = new GoogleGenAI({ apiKey });
+    for (const model of TEXT_MODELS) {
+        let apiKey = '';
+        try {
+            apiKey = await getGeminiApiKey();
+            const ai = new GoogleGenAI({ apiKey });
 
-        const response = await ai.models.generateContent({
-            model: TEXT_MODEL,
-            contents: finalPrompt,
-            config: {
-                systemInstruction: sysInstruct,
-                responseMimeType: 'application/json',
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        aiReply: { type: Type.STRING },
-                        correction: { type: Type.STRING },
-                        explanation: { type: Type.STRING },
-                        score: { type: Type.NUMBER },
-                        feedback: { type: Type.STRING }
-                    },
-                    required: ["aiReply"]
+            const response = await ai.models.generateContent({
+                model: model,
+                contents: finalPrompt,
+                config: {
+                    systemInstruction: sysInstruct,
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                        type: Type.OBJECT,
+                        properties: {
+                            aiReply: { type: Type.STRING },
+                            correction: { type: Type.STRING },
+                            explanation: { type: Type.STRING },
+                            score: { type: Type.NUMBER },
+                            feedback: { type: Type.STRING }
+                        },
+                        required: ["aiReply"]
+                    }
                 }
+            });
+
+            // Deduct credits (1 credit for text generation)
+            const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
+            if (newCredits === null) {
+                throw new Error("CREDITS_EXHAUSTED");
             }
-        });
+            useAppStore.getState().updateUserCredits(newCredits);
 
-        // Deduct credits (1 credit for text generation)
-        const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
-        if (newCredits === null) {
-            throw new Error("CREDITS_EXHAUSTED");
+            return JSON.parse(response.text || "{}");
+        } catch (e: unknown) {
+            const error = e as Error;
+            if (apiKey) reportFailedApiKey(apiKey);
+            console.warn(`generateRoleplayResponse failed with model ${model}:`, error);
+            if (error.message === "CREDITS_EXHAUSTED") {
+                return { aiReply: "⚠️ Crédits insuffisants." };
+            }
         }
-        useAppStore.getState().updateUserCredits(newCredits);
-
-        return JSON.parse(response.text || "{}");
-    } catch (e: any) {
-        if (e.message === "CREDITS_EXHAUSTED") {
-            return { aiReply: "⚠️ Crédits insuffisants." };
-        }
-        return { aiReply: "Problème technique." };
     }
+    return { aiReply: "Problème technique." };
 };
 
 // 7. GENERIC TEXT GENERATION
 export const generateText = async (prompt: string): Promise<string> => {
-    try {
-        const apiKey = await getGeminiApiKey();
-        const ai = new GoogleGenAI({ apiKey });
+    for (const model of TEXT_MODELS) {
+        let apiKey = '';
+        try {
+            apiKey = await getGeminiApiKey();
+            const ai = new GoogleGenAI({ apiKey });
 
-        const response = await ai.models.generateContent({
-            model: TEXT_MODEL,
-            contents: prompt
-        });
-        return response.text || "";
-    } catch (e) {
-        console.error("generateText error:", e);
-        return "";
+            const response = await ai.models.generateContent({
+                model: model,
+                contents: prompt
+            });
+            return response.text || "";
+        } catch (e) {
+            if (apiKey) reportFailedApiKey(apiKey);
+            console.warn(`generateText failed with model ${model}:`, e);
+        }
     }
+    return "";
 };

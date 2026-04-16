@@ -162,7 +162,7 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
               
               // Use session-specific user config
               const sessionUser = getSessionUser();
-              const result = await generateRoleplayResponse([], scenario.prompt, sessionUser, false, true);
+              const result = await generateRoleplayResponse([], scenario.prompt, sessionUser, false);
               
               const initMsg: ChatMessage = {
                   id: 'sys_init',
@@ -179,7 +179,7 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
               const { data: u } = await refetch();
               if (u) onUpdateUser(u);
 
-          } catch (e) {
+          } catch {
               notify("Erreur d'initialisation. Réessayez.", 'error');
               setScenario(null);
               setStep('selection');
@@ -192,7 +192,8 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
   };
 
   const handleMicClick = async () => {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      // @ts-expect-error - SpeechRecognition might not be in standard types
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
           notify("Votre navigateur ne supporte pas la reconnaissance vocale.", 'error');
           return;
@@ -207,10 +208,11 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
           // Request microphone permission explicitly first to avoid 'not-allowed' error
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           stream.getTracks().forEach(track => track.stop());
-      } catch (e: any) {
-          console.error("Microphone permission error:", e);
+      } catch (error: unknown) {
+          console.error("Microphone permission error:", error);
           const isIframe = window.self !== window.top;
           
+          const e = error as Error;
           if (e.name === 'NotAllowedError' || e.message?.includes('denied')) {
               const msg = isIframe 
                 ? "L'accès au micro est bloqué par l'aperçu. Veuillez ouvrir l'application dans un nouvel onglet (bouton en haut à droite) pour utiliser le micro."
@@ -241,12 +243,14 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
 
       recognition.onstart = () => setIsListening(true);
       recognition.onend = () => setIsListening(false);
-      recognition.onerror = (event: any) => {
+      // @ts-expect-error - SpeechRecognition event types
+      recognition.onerror = (event) => {
           console.error("Speech error", event.error);
           setIsListening(false);
           notify("Erreur micro.", 'error');
       };
-      recognition.onresult = (event: any) => {
+      // @ts-expect-error - SpeechRecognition event types
+      recognition.onresult = (event) => {
           const transcript = event.results[0][0].transcript;
           if (transcript) {
               setInput(prev => prev + (prev ? ' ' : '') + transcript);
@@ -313,8 +317,8 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
           if (learningSession) {
               await updateSession({ ...learningSession, messages: finalMessages });
           }
-      } catch (e) {
-          console.error(e);
+      } catch (error) {
+          console.error(error);
           notify("Erreur de connexion", 'error');
       } finally {
           setIsLoading(false);
@@ -336,7 +340,7 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
               feedback: result.feedback || "Bravo pour ta participation !"
           });
 
-      } catch (e) {
+      } catch {
           setFinalScore({ score: 0, feedback: "Erreur lors de l'évaluation." });
       } finally {
           setIsLoading(false);

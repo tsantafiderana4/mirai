@@ -165,7 +165,7 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
 
   const processBilling = useCallback(async () => {
       if (!user) return;
-      const success = await chargeVoiceMinute(user.id);
+      const success = await chargeVoiceMinute();
       if (success) {
           const { data: updatedUser } = await refetch();
           if (updatedUser) onUpdateUser(updatedUser);

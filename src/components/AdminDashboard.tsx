@@ -494,6 +494,20 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                         <label className="text-xs font-black text-slate-400 uppercase tracking-widest block ml-2">Contact Airtel</label>
                         <input type="text" value={localSettings?.adminContact?.airtel || ''} onChange={e => setLocalSettings(prev => prev ? {...prev, adminContact: {...(prev.adminContact || { telma: '', airtel: '', orange: '' }), airtel: e.target.value}, updatedAt: Date.now()} : undefined)} className="w-full p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl font-black text-xl border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
                     </div>
+                    <div className="space-y-3">
+                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest block ml-2">Console Logs (Debug)</label>
+                        <div className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
+                            <button 
+                                onClick={() => setLocalSettings(prev => prev ? {...prev, showConsoleLogs: !prev.showConsoleLogs, updatedAt: Date.now()} : undefined)}
+                                className={`w-14 h-8 rounded-full transition-all relative ${localSettings?.showConsoleLogs ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+                            >
+                                <div className={`absolute top-1 w-6 h-6 bg-white rounded-full transition-all ${localSettings?.showConsoleLogs ? 'left-7' : 'left-1'}`} />
+                            </button>
+                            <span className="text-sm font-bold text-slate-600 dark:text-slate-300">
+                                {localSettings?.showConsoleLogs ? 'Activé (Visible)' : 'Désactivé (Caché)'}
+                            </span>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="mb-10">

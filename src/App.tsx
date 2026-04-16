@@ -72,6 +72,57 @@ const AppContent: React.FC = () => {
   const [isResuming, setIsResuming] = useState(false);
   const [showCulturalIntro, setShowCulturalIntro] = useState(false);
 
+  // 0. CONSOLE LOG MANAGEMENT
+  useEffect(() => {
+    const handleConsoleLogs = (show: boolean) => {
+      if (show === false) {
+        // @ts-expect-error - storing original console
+        if (!window._originalConsoleLog) {
+          // @ts-expect-error - storing original console
+          window._originalConsoleLog = console.log;
+          // @ts-expect-error - storing original console
+          window._originalConsoleWarn = console.warn;
+          // @ts-expect-error - storing original console
+          window._originalConsoleInfo = console.info;
+        }
+        console.log = () => {};
+        console.warn = () => {};
+        console.info = () => {};
+      } else {
+        // @ts-expect-error - restoring original console
+        if (window._originalConsoleLog) {
+          // @ts-expect-error - restoring original console
+          console.log = window._originalConsoleLog;
+          // @ts-expect-error - restoring original console
+          console.warn = window._originalConsoleWarn;
+          // @ts-expect-error - restoring original console
+          console.info = window._originalConsoleInfo;
+        }
+      }
+    };
+
+    // Initial check
+    supabase.from('system_settings').select('admin_contact').single().then(({ data }) => {
+      if (data && data.admin_contact) {
+        handleConsoleLogs(!!data.admin_contact.showConsoleLogs);
+      }
+    });
+
+    // Real-time listener
+    const channel = supabase
+      .channel('system_settings_logs')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'system_settings' }, payload => {
+        if (payload.new && payload.new.admin_contact) {
+          handleConsoleLogs(!!payload.new.admin_contact.showConsoleLogs);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
   // 1. INITIALIZATION & AUTH LISTENER
   useEffect(() => {
     // Check URL for verification

@@ -125,6 +125,7 @@ export interface SystemSettings {
     geminiKeys?: string[];
     [key: string]: any;
   };
+  showConsoleLogs?: boolean;
   updatedAt: number;
 }
 

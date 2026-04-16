@@ -118,8 +118,26 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, toggleTh
                     <button onClick={() => setShowForgotModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X className="w-5 h-5" /></button>
                     
                     <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">{t('auth.reset_password') || "Réinitialiser le mot de passe"}</h2>
-                    <p className="text-sm text-slate-500 mb-6">{t('auth.reset_password_desc') || "Entrez votre email ou identifiant pour recevoir un lien de réinitialisation."}</p>
+                    <p className="text-sm text-slate-500 mb-6">{t('auth.reset_password_desc') || "Entrez votre email ou identifiant pour recevoir un lien de réinitialisation ou contactez l'admin."}</p>
                     
+                    <div className="flex gap-2 mb-6">
+                        <a href="https://wa.me/261349310268" target="_blank" rel="noopener noreferrer" className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-xl text-center text-xs transition-all shadow-sm">
+                            WhatsApp
+                        </a>
+                        <a href="https://www.facebook.com/TeacherMadaFormation" target="_blank" rel="noopener noreferrer" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-center text-xs transition-all shadow-sm">
+                            Facebook
+                        </a>
+                    </div>
+                    
+                    <div className="relative mb-6">
+                        <div className="absolute inset-0 flex items-center">
+                            <div className="w-full border-t border-slate-200 dark:border-slate-700"></div>
+                        </div>
+                        <div className="relative flex justify-center text-xs">
+                            <span className="bg-white dark:bg-slate-900 px-2 text-slate-500">Ou</span>
+                        </div>
+                    </div>
+
                     <form onSubmit={handleForgotSubmit} className="space-y-4">
                         <div>
                             <label className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-1.5 ml-3 tracking-widest uppercase">{t('auth.email_or_username_label') || "Email ou Identifiant"}</label>

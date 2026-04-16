@@ -21,7 +21,7 @@ export const useAdmin = () => {
         queryFn: async () => {
             const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
             if (error) throw error;
-            return data.map((p: any) => ({
+            return data.map((p: { id: string; username: string; role: string; created_at: string; updated_at: string; credits: number; is_suspended: boolean; preferences: any }) => ({
                 id: p.id,
                 username: p.username,
                 role: p.role,
@@ -39,7 +39,7 @@ export const useAdmin = () => {
         queryFn: async () => {
             const { data, error } = await supabase.from('admin_requests').select('*').order('created_at', { ascending: false });
             if (error) throw error;
-            return data.map((r: any) => ({
+            return data.map((r: { id: string; user_id: string; username: string; type: string; amount: number; message: string; status: string; created_at: string }) => ({
                 id: r.id,
                 userId: r.user_id,
                 username: r.username,
@@ -59,11 +59,12 @@ export const useAdmin = () => {
             if (error && error.code !== 'PGRST116') throw error;
             
             if (data) {
-                // Extract apiKeys from admin_contact if it exists there
+                // Extract apiKeys and showConsoleLogs from admin_contact if it exists there
                 const adminContactData = data.admin_contact || {};
                 const apiKeys = adminContactData.apiKeys || {};
+                const showConsoleLogs = typeof adminContactData.showConsoleLogs !== 'undefined' ? adminContactData.showConsoleLogs : true;
                 
-                // Clean up adminContact to not include apiKeys in the UI if we want to separate them
+                // Clean up adminContact to not include apiKeys or showConsoleLogs in the UI if we want to separate them
                 const cleanAdminContact = {
                     telma: adminContactData.telma || '',
                     airtel: adminContactData.airtel || '',
@@ -75,6 +76,7 @@ export const useAdmin = () => {
                     validTransactionRefs: data.valid_coupons || [],
                     adminContact: cleanAdminContact,
                     apiKeys: apiKeys,
+                    showConsoleLogs: showConsoleLogs,
                     updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : Date.now()
                 } as SystemSettings;
             }
@@ -91,10 +93,11 @@ export const useAdmin = () => {
 
     const updateSettings = useMutation({
         mutationFn: async (newSettings: SystemSettings) => {
-            // Merge apiKeys into admin_contact for storage
+            // Merge apiKeys and showConsoleLogs into admin_contact for storage
             const adminContactWithKeys = {
                 ...newSettings.adminContact,
-                apiKeys: newSettings.apiKeys || {}
+                apiKeys: newSettings.apiKeys || {},
+                showConsoleLogs: typeof newSettings.showConsoleLogs !== 'undefined' ? newSettings.showConsoleLogs : true
             };
 
             const { error } = await supabase.from('system_settings').upsert({ 
@@ -153,7 +156,7 @@ export const useAdmin = () => {
         queryFn: async () => {
             const { data, error } = await supabase.from('coupons').select('*').order('created_at', { ascending: false });
             if (error) throw error;
-            return data.map((c: any) => ({
+            return data.map((c: { code: string; amount: number; expires_at: string; created_at: string }) => ({
                 code: c.code,
                 amount: c.amount,
                 expiresAt: c.expires_at ? new Date(c.expires_at).getTime() : null,

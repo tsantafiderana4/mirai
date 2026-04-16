@@ -1,7 +1,7 @@
 
 import { UserProfile } from "../../types";
 import { SmartExam, ExamResultDetailed, ExamType, ExamQuestion } from "./types";
-import { TEXT_MODEL, getGeminiApiKey, reportFailedApiKey } from "../../services/geminiService";
+import { TEXT_MODEL, TEXT_MODELS, getGeminiApiKey, reportFailedApiKey } from "../../services/geminiService";
 import { CREDIT_COSTS, deductCredits } from "../../services/creditService";
 import { supabase, supabaseUrl, supabaseAnonKey } from "../../lib/supabase";
 import { useAppStore } from "../../store/useAppStore";
@@ -67,39 +67,43 @@ const callGeminiFunction = async (action: string, payload: Record<string, unknow
         
         // FALLBACK: Direct SDK Call
         if (action === 'generate_json' || action === 'generate_exam') {
-            let apiKey = '';
-            try {
-                apiKey = await getGeminiApiKey();
-                const ai = new GoogleGenAI({ apiKey });
-                
-                const model = (payload.model as string) || TEXT_MODEL;
-                const contents = payload.contents;
-                const config = (payload.config as Record<string, unknown>) || {};
-                
-                // Format contents for SDK
-                const formattedContents = typeof contents === 'string' 
-                    ? [{ role: 'user', parts: [{ text: contents }] }] 
-                    : contents;
+            let lastError: Error | null = null;
+            for (const model of TEXT_MODELS) {
+                let apiKey = '';
+                try {
+                    apiKey = await getGeminiApiKey();
+                    const ai = new GoogleGenAI({ apiKey });
+                    
+                    const contents = payload.contents;
+                    const config = (payload.config as Record<string, unknown>) || {};
+                    
+                    // Format contents for SDK
+                    const formattedContents = typeof contents === 'string' 
+                        ? [{ role: 'user', parts: [{ text: contents }] }] 
+                        : contents;
 
-                const result = await ai.models.generateContent({
-                    model: model,
-                    contents: formattedContents as { role: string; parts: { text: string }[] }[],
-                    config: {
-                        ...config,
-                        responseMimeType: 'application/json',
-                    }
-                });
+                    const result = await ai.models.generateContent({
+                        model: model,
+                        contents: formattedContents as { role: string; parts: { text: string }[] }[],
+                        config: {
+                            ...config,
+                            responseMimeType: 'application/json',
+                        }
+                    });
 
-                const rawText = result.text || "{}";
-                const cleanText = rawText.replace(/```json\n?|```/g, '').trim();
-                return { json: JSON.parse(cleanText) };
+                    const rawText = result.text || "{}";
+                    const cleanText = rawText.replace(/```json\n?|```/g, '').trim();
+                    return { json: JSON.parse(cleanText) };
 
-            } catch (sdkError: unknown) {
-                const sError = sdkError as Error;
-                if (apiKey) reportFailedApiKey(apiKey);
-                console.error("[Gemini SDK Fallback Error]", sError);
-                throw new Error(`Erreur IA (Fallback): ${sError.message}`);
+                } catch (sdkError: unknown) {
+                    const sError = sdkError as Error;
+                    if (apiKey) reportFailedApiKey(apiKey);
+                    lastError = sError;
+                    console.warn(`[Gemini SDK Fallback] Failed with model ${model}:`, sError);
+                    // Continue to next model
+                }
             }
+            throw new Error(`Erreur IA (Fallback): ${lastError?.message || 'Tous les modèles ont échoué'}`);
         }
         
         throw error;

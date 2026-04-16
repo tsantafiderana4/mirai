@@ -18,8 +18,32 @@ const DebugConsole: React.FC = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [isVisible, setIsVisible] = useState(true); // Visible by default for debugging
+  const [showLogs, setShowLogs] = useState(true);
 
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Check initial setting
+    supabase.from('system_settings').select('admin_contact').single().then(({ data }) => {
+      if (data && data.admin_contact) {
+        setShowLogs(!!data.admin_contact.showConsoleLogs);
+      }
+    });
+
+    // Real-time listener
+    const channel = supabase
+      .channel('debug_console_settings')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'system_settings' }, payload => {
+        if (payload.new && payload.new.admin_contact) {
+          setShowLogs(!!payload.new.admin_contact.showConsoleLogs);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   useEffect(() => {
     // Enable via URL param ?debug=true
@@ -36,6 +60,11 @@ const DebugConsole: React.FC = () => {
     const originalInfo = console.info;
 
     const addLog = (type: LogType, args: any[]) => {
+      // Check if console.log has been disabled globally
+      if (!showLogs) {
+        return;
+      }
+
       const message = args.map(arg => 
         typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
       ).join(' ');
@@ -100,6 +129,10 @@ const DebugConsole: React.FC = () => {
     navigator.clipboard.writeText(text);
     toast.success('Logs copiés !');
   };
+
+  if (!showLogs) {
+    return null;
+  }
 
   if (!isVisible) {
       // Invisible trigger area (bottom left)
