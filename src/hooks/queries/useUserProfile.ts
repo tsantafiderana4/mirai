@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
 import { UserProfile, UserPreferences } from '../../types';
+import { useEffect } from 'react';
 
 const mapProfile = (data: any): UserProfile => ({
     id: data.id,
@@ -33,6 +34,36 @@ export const useUserProfile = (userId: string | undefined) => {
         enabled: !!userId,
         staleTime: 1000 * 60 * 5, // 5 minutes
     });
+
+    useEffect(() => {
+        if (!userId) return;
+
+        const channel = supabase
+            .channel(`public:profiles:id=eq.${userId}`)
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'profiles',
+                    filter: `id=eq.${userId}`,
+                },
+                (payload) => {
+                    queryClient.setQueryData(['userProfile', userId], (oldData: any) => {
+                        if (!oldData) return oldData;
+                        return {
+                            ...oldData,
+                            ...mapProfile(payload.new)
+                        };
+                    });
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [userId, queryClient]);
 
     const updateMutation = useMutation({
         mutationFn: async (updatedProfile: Partial<UserProfile> & { id: string }) => {

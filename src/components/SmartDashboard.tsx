@@ -2,6 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { UserProfile, SmartNotification, VoiceName, Certificate, LearningSession, UserPreferences } from '../types';
 import { X, LogOut, Sun, Moon, Book, Trophy, Loader2, Save, Globe, Download, ShieldCheck, Upload, CreditCard, Plus, AlertTriangle, MessageCircle, Phone, Brain, ArrowRight, Award, ChevronRight, User, Bell, Check, Trash2, Info, CheckCircle, XCircle, BarChart3, Lock } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useCertificates } from '../hooks/queries/useCertificates';
 import { useExamResults } from '../hooks/queries/useExamResults';
 import { useNotifications } from '../hooks/queries/useNotifications';
@@ -26,6 +27,7 @@ interface Props {
   onStartExercise: () => void;
   onStartVoice: () => void;
   onStartExam: () => void;
+  onStartImmersion: () => void;
 }
 
 interface EnrichedCertificate extends Certificate {
@@ -34,7 +36,7 @@ interface EnrichedCertificate extends Certificate {
 }
 
 const SmartDashboard: React.FC<Props> = ({ 
-    onClose, onOpenAdmin, onShowPayment, onStartPractice, onStartExercise, onStartVoice, onStartExam 
+    onClose, onOpenAdmin, onShowPayment, onStartPractice, onStartExercise, onStartVoice, onStartExam, onStartImmersion 
 }) => {
   const { user, setUser, isDarkMode, toggleDarkMode, logout } = useAppStore();
   const { t, setLanguage } = useTranslation();
@@ -389,7 +391,21 @@ const SmartDashboard: React.FC<Props> = ({
                         <div className="flex justify-between items-start relative z-10">
                             <div>
                                 <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isLowCredits ? 'text-red-100' : 'text-slate-400'}`}>{t('common.credits')}</p>
-                                <div className="text-3xl font-black tracking-tight">{user.credits} <span className={`text-sm font-medium ${isLowCredits ? 'text-red-200' : 'text-slate-400'}`}>CRD</span></div>
+                                <div className="text-3xl font-black tracking-tight flex items-baseline gap-1">
+                                    <AnimatePresence mode="popLayout">
+                                        <motion.span
+                                            key={user.credits}
+                                            initial={{ opacity: 0, y: -10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: 10 }}
+                                            transition={{ duration: 0.2 }}
+                                            className="inline-block"
+                                        >
+                                            {user.credits}
+                                        </motion.span>
+                                    </AnimatePresence>
+                                    <span className={`text-sm font-medium ${isLowCredits ? 'text-red-200' : 'text-slate-400'}`}>CRD</span>
+                                </div>
                             </div>
                             <div className="p-2.5 bg-white/10 rounded-xl backdrop-blur-md">
                                 {isLowCredits ? <AlertTriangle className="w-5 h-5 text-white" /> : <CreditCard className="w-5 h-5 text-white" />}
@@ -434,6 +450,13 @@ const SmartDashboard: React.FC<Props> = ({
                                  <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{t('dashboard.certificates')}</div>
                              </div>
                         </div>
+                    </div>
+
+                    {/* CULTURAL IMMERSION */}
+                    <div className="space-y-3">
+                        <button onClick={onStartImmersion} className="w-full p-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20">
+                            {language === 'mg' ? 'Tsara ho fantatra' : 'Bon à savoir'} @{user?.preferences?.targetLanguage}
+                        </button>
                     </div>
 
                     {/* NEW ACTION BUTTONS (Replacing Progress) */}
@@ -980,7 +1003,8 @@ const SmartDashboard: React.FC<Props> = ({
                                 value={editTeacherName} 
                                 onChange={e => setEditTeacherName(e.target.value)} 
                                 placeholder="TeacherMada"
-                                className="w-full p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold border-transparent border focus:bg-white dark:focus:bg-slate-900 transition-all"
+                                disabled={true}
+                                className="w-full p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold border-transparent border focus:bg-white dark:focus:bg-slate-900 transition-all opacity-50 cursor-not-allowed"
                             />
                         </div>
                         <div className="space-y-2">

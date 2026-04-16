@@ -231,7 +231,7 @@ const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment, 
                         <ul className="space-y-2 mb-8 text-sm text-slate-600 dark:text-slate-300">
                             <li className="flex items-center gap-2"><CheckCircle className="w-4 h-4 text-emerald-500"/> {t('exam.diagnostic_feat1') || "Analyse détaillée"}</li>
                             <li className="flex items-center gap-2"><CheckCircle className="w-4 h-4 text-emerald-500"/> {t('exam.diagnostic_feat2') || "Pas de certificat"}</li>
-                            <li className="flex items-center gap-2"><CheckCircle className="w-4 h-4 text-emerald-500"/> {t('exam.diagnostic_feat3') || "Durée ~15 min"}</li>
+                            <li className="flex items-center gap-2"><CheckCircle className="w-4 h-4 text-emerald-500"/> {t('exam.diagnostic_feat3') || "Durée ~20 min"}</li>
                         </ul>
                         <button onClick={() => requestStart('diagnostic')} className={`w-full py-4 font-bold rounded-xl transition-all flex items-center justify-center gap-2 ${user.credits >= CREDIT_COSTS.DIAGNOSTIC ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white hover:bg-indigo-600 hover:text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 opacity-80'}`}>
                             {user.credits >= CREDIT_COSTS.DIAGNOSTIC ? (t('common.start') || 'Commencer') : <><Lock className="w-4 h-4"/> {t('common.locked') || "Verrouillé"}</>} ({CREDIT_COSTS.DIAGNOSTIC} {t('common.credits') || "Crédits"})
@@ -288,7 +288,7 @@ const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment, 
                                     id: 'duration',
                                     icon: <Clock className="w-5 h-5 text-indigo-500 shrink-0" />,
                                     title: t('exam.rule_duration_title') || "Durée stricte",
-                                    desc: t('exam.rule_duration_desc') || "L'examen dure exactement 15 minutes. Les réponses sont soumises automatiquement à la fin du temps imparti."
+                                    desc: t('exam.rule_duration_desc') || "L'examen dure exactement 20 minutes. Les réponses sont soumises automatiquement à la fin du temps imparti."
                                 },
                                 {
                                     id: 'anti_cheat',

@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, Smartphone, ArrowRight, Send, CheckCircle, Copy, Check, Coins, Ticket, Loader2, ChevronLeft, AlertTriangle, TrendingUp } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ADMIN_CONTACTS, CREDIT_PRICE_ARIARY } from '../constants';
 import { UserProfile } from '../types';
 import { useTranslation } from '../contexts/LanguageContext';
@@ -53,14 +54,25 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, user }) => {
 
   // Effect for Input Tooltip (Visible for 10s)
   useEffect(() => {
+      let timer: number | undefined;
       if (activeTab === 'money' && step === 1) {
-          setShowInputGuide(true);
-          const timer = setTimeout(() => {
+          const syncTimer = setTimeout(() => {
+              setShowInputGuide(true);
+          }, 0);
+          
+          timer = window.setTimeout(() => {
               setShowInputGuide(false);
           }, 10000); // Disparaît après 10 secondes
-          return () => clearTimeout(timer);
+          
+          return () => {
+              clearTimeout(syncTimer);
+              if (timer) clearTimeout(timer);
+          };
       } else {
-          setShowInputGuide(false);
+          const syncTimer = setTimeout(() => {
+              setShowInputGuide(false);
+          }, 0);
+          return () => clearTimeout(syncTimer);
       }
   }, [activeTab, step]);
 
@@ -136,7 +148,21 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, user }) => {
                      <span className="text-[10px] text-indigo-200 font-bold uppercase tracking-widest mb-0.5">{t('payment.current_balance')}</span>
                      <div className="flex items-center gap-1.5 bg-white/20 px-3 py-1 rounded-full backdrop-blur-sm border border-white/10">
                         <TrendingUp className="w-3 h-3 text-amber-300" />
-                        <span className="text-sm font-black text-white">{user.credits} CRD</span>
+                        <span className="text-sm font-black text-white flex items-baseline gap-1">
+                            <AnimatePresence mode="popLayout">
+                                <motion.span
+                                    key={user.credits}
+                                    initial={{ opacity: 0, y: -10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: 10 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="inline-block"
+                                >
+                                    {user.credits}
+                                </motion.span>
+                            </AnimatePresence>
+                            CRD
+                        </span>
                      </div>
                 </div>
 

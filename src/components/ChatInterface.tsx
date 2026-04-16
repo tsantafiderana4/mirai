@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Phone, ArrowLeft, Sun, Moon, Zap, ChevronDown, Repeat, MessageCircle, Brain, Loader2, AlertTriangle, Play, BookOpen, Trophy, Cloud, CloudOff, CloudLightning, Award, Check, Volume2, Globe } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ExplanationLanguage } from '../types';
 import { ChatMessage } from '../types';
 import { generateText } from '../services/geminiService';
@@ -292,8 +293,20 @@ const ChatInterface: React.FC<Props> = ({
                 </h1>
                 <div onClick={onShowPayment} className={`flex items-center gap-1 cursor-pointer transition-all duration-500 px-2 py-0.5 rounded-full border ${isLowCredits ? 'animate-pulse text-red-600 bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 border-red-500 scale-105' : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 hover:scale-105'}`}>
                     {isLowCredits ? <AlertTriangle className="w-3 h-3" /> : <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />}
-                    <span className={`text-[10px] font-bold ${isLowCredits ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                        {user.credits} {t('common.credits')}
+                    <span className={`text-[10px] font-bold flex items-center gap-1 ${isLowCredits ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                        <AnimatePresence mode="popLayout">
+                            <motion.span
+                                key={user.credits}
+                                initial={{ opacity: 0, y: -10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: 10 }}
+                                transition={{ duration: 0.2 }}
+                                className="inline-block"
+                            >
+                                {user.credits}
+                            </motion.span>
+                        </AnimatePresence>
+                        {t('common.credits')}
                     </span>
                 </div>
             </div>
@@ -376,8 +389,27 @@ const ChatInterface: React.FC<Props> = ({
                         ].map((item) => {
                             const isOpen = openGuideItem === item.id;
                             const guideText = t(`common.guide.${item.id}`);
-                            const [title, ...descParts] = guideText.includes(':') ? guideText.split(':') : [guideText, ''];
-                            const description = descParts.join(':').trim();
+                            
+                            let displayTitle = guideText;
+                            let previewText = "";
+                            let structuredSections: { label: string, text: string }[] = [];
+
+                            if (guideText.includes('|')) {
+                                const parts = guideText.split('|').map(p => p.trim());
+                                displayTitle = parts[0];
+                                structuredSections = parts.slice(1).map(p => {
+                                    const colonIdx = p.indexOf(':');
+                                    return {
+                                        label: colonIdx > -1 ? p.substring(0, colonIdx).trim() : '',
+                                        text: colonIdx > -1 ? p.substring(colonIdx + 1).trim() : p
+                                    };
+                                });
+                                previewText = structuredSections[0]?.text || "";
+                            } else {
+                                const [tTitle, ...descParts] = guideText.includes(':') ? guideText.split(':') : [guideText, ''];
+                                displayTitle = tTitle.trim();
+                                previewText = descParts.join(':').trim();
+                            }
 
                             return (
                                 <div key={item.id} className={`group relative transition-all duration-300 ${isOpen ? 'md:col-span-2' : ''}`}>
@@ -395,13 +427,13 @@ const ChatInterface: React.FC<Props> = ({
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center justify-between">
                                                 <h4 className="text-xs font-black text-slate-800 dark:text-white truncate uppercase tracking-tight">
-                                                    {title.trim()}
+                                                    {displayTitle}
                                                 </h4>
                                                 <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} />
                                             </div>
                                             {!isOpen && (
                                                 <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                                                    {description || "En savoir plus..."}
+                                                    {previewText || "En savoir plus..."}
                                                 </p>
                                             )}
                                         </div>
@@ -409,15 +441,30 @@ const ChatInterface: React.FC<Props> = ({
                                     
                                     {isOpen && (
                                         <div className="mt-2 p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 animate-fade-in-up">
-                                            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-4">
-                                                {description}
-                                            </p>
+                                            {structuredSections.length > 0 ? (
+                                                <div className="space-y-3 mb-4">
+                                                    {structuredSections.map((sec, idx) => (
+                                                        <div key={idx} className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-700/50">
+                                                            <span className={`text-[10px] font-black uppercase tracking-wider ${idx === 0 ? 'text-indigo-500' : idx === 1 ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                                                {sec.label}
+                                                            </span>
+                                                            <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
+                                                                {sec.text}
+                                                            </p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-4">
+                                                    {previewText}
+                                                </p>
+                                            )}
                                             {item.action && (
                                                 <button 
                                                     onClick={(e) => { e.stopPropagation(); item.action!(); }}
                                                     className="w-full py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[10px] font-black uppercase tracking-widest rounded-xl hover:opacity-90 transition-all active:scale-[0.98] shadow-lg"
                                                 >
-                                                    Lancer l'action
+                                                    {t('common.start') || "Lancer l'action"}
                                                 </button>
                                             )}
                                         </div>

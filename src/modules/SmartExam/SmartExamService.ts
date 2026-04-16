@@ -1,6 +1,6 @@
 
 import { UserProfile } from "../../types";
-import { SmartExam, ExamResultDetailed, ExamType } from "./types";
+import { SmartExam, ExamResultDetailed, ExamType, ExamQuestion } from "./types";
 import { TEXT_MODEL, getGeminiApiKey, reportFailedApiKey } from "../../services/geminiService";
 import { CREDIT_COSTS, deductCredits } from "../../services/creditService";
 import { supabase, supabaseUrl, supabaseAnonKey } from "../../lib/supabase";
@@ -56,13 +56,14 @@ const callGeminiFunction = async (action: string, payload: Record<string, unknow
 
         throw new Error(errorData.error || errorData.message || `Erreur serveur IA (${response.status})`);
 
-    } catch (e: any) {
+    } catch (e: unknown) {
+        const error = e as Error;
         // If it's a credit error or auth error, don't fallback, just rethrow
-        if (e.message.includes("Crédits insuffisants") || e.message.includes("Session expirée")) {
-            throw e;
+        if (error.message.includes("Crédits insuffisants") || error.message.includes("Session expirée")) {
+            throw error;
         }
 
-        console.warn(`[Gemini Function] Edge function failed (${e.message}), falling back to direct SDK...`);
+        console.warn(`[Gemini Function] Edge function failed (${error.message}), falling back to direct SDK...`);
         
         // FALLBACK: Direct SDK Call
         if (action === 'generate_json' || action === 'generate_exam') {
@@ -73,7 +74,7 @@ const callGeminiFunction = async (action: string, payload: Record<string, unknow
                 
                 const model = (payload.model as string) || TEXT_MODEL;
                 const contents = payload.contents;
-                const config = (payload.config as any) || {};
+                const config = (payload.config as Record<string, unknown>) || {};
                 
                 // Format contents for SDK
                 const formattedContents = typeof contents === 'string' 
@@ -82,7 +83,7 @@ const callGeminiFunction = async (action: string, payload: Record<string, unknow
 
                 const result = await ai.models.generateContent({
                     model: model,
-                    contents: formattedContents as any,
+                    contents: formattedContents as { role: string; parts: { text: string }[] }[],
                     config: {
                         ...config,
                         responseMimeType: 'application/json',
@@ -93,14 +94,15 @@ const callGeminiFunction = async (action: string, payload: Record<string, unknow
                 const cleanText = rawText.replace(/```json\n?|```/g, '').trim();
                 return { json: JSON.parse(cleanText) };
 
-            } catch (sdkError: any) {
+            } catch (sdkError: unknown) {
+                const sError = sdkError as Error;
                 if (apiKey) reportFailedApiKey(apiKey);
-                console.error("[Gemini SDK Fallback Error]", sdkError);
-                throw new Error(`Erreur IA (Fallback): ${sdkError.message}`);
+                console.error("[Gemini SDK Fallback Error]", sError);
+                throw new Error(`Erreur IA (Fallback): ${sError.message}`);
             }
         }
         
-        throw e;
+        throw error;
     }
 };
 
@@ -129,7 +131,7 @@ export const SmartExamService = {
         const lang = user.preferences?.targetLanguage || 'Anglais';
         
         // Fetch weaknesses from storage instead of user.aiMemory
-        let weaknesses: any[] = [];
+        let weaknesses: { tag: string }[] = [];
         try {
             const { data } = await supabase
                 .from('user_weakness')
@@ -137,7 +139,7 @@ export const SmartExamService = {
                 .eq('user_id', user.id)
                 .order('identified_at', { ascending: false })
                 .limit(5);
-            if (data) weaknesses = data;
+            if (data) weaknesses = data as { tag: string }[];
         } catch (e) {
             console.error("Error fetching weaknesses", e);
         }
@@ -157,30 +159,46 @@ export const SmartExamService = {
             Langue d'explication et d'instruction : "${explanationLang}".
             
             OBJECTIF : Créer un examen sérieux, immersif, non ambigu et capable de mesurer réellement la capacité à communiquer. C'est meilleur que l'examen officiel dans un enseignement supérieur.
+            
+            STRATÉGIE PÉDAGOGIQUE :
+            - Variabilité : Chaque question doit explorer un contexte différent (ne pas rester sur le même sujet tout au long de la section).
+            - Authenticité : Utilise des documents réels simulés (emails, extraits de presse, dialogues de rue, annonces aéroport).
+            - Évaluation Holistique : Teste non seulement la compréhension littérale mais aussi l'inférence, le ton, et l'intention de l'auteur.
+            - Adaptabilité : Si l'élève a des faiblesses (${difficulties}), cible-les spécifiquement avec des questions stratégiques.
 
             RÈGLES OBLIGATOIRES :
-            1. CONTEXTE RÉEL : Chaque section DOIT être basée sur une situation concrète (travail, voyage, vie sociale, étude, communication réelle).
-            2. STRUCTURE STRICTE ET LANGUES : Chaque section doit contenir :
-               - context : la situation ou le texte/dialogue de base (long et riche pour la lecture/écoute). DOIT ÊTRE EN LANGUE CIBLE ("${lang}").
-               - instruction : consigne claire. DOIT ÊTRE EN LANGUE D'EXPLICATION ("${explanationLang}").
-               - questions : un tableau de questions liées à ce contexte. LA QUESTION ET LES OPTIONS DOIVENT ÊTRE EN LANGUE CIBLE ("${lang}").
-            3. TYPES DE QUESTIONS : Variez les formats pour les sections 'qcm' (lecture) et 'listening' :
-               - 'qcm' : Choix multiple classique (fournir 'options').
-               - 'true_false_not_given' : Vrai / Faux / Non Donné (fournir ces 3 choix traduits dans la langue cible dans 'options').
-               - 'fill_in_the_blanks' : Texte à trous. La 'question' contient une phrase avec "_____" et l'étudiant doit trouver le mot manquant (ne pas fournir d'options).
-               - 'open' : Question ouverte (pour 'writing' et 'speaking').
-            4. TYPES DE COMPÉTENCES : Inclure obligatoirement : compréhension globale, compréhension de détail, intention du locuteur, inférence logique et pièges, vocabulaire/grammaire en contexte.
-            5. IMMERSION : Utiliser des scénarios réalistes (emails, conversations, annonces, dialogues naturels).
-            6. DIFFICULTÉ PROGRESSIVE (Environ 15-20 questions au total) :
-               - Adapter la difficulté des questions au sein du niveau ${level}.
-            7. ADAPTATION CEFR : Respect strict du niveau "${level}".
-            8. VALIDATION INTERNE : Avant de générer, assure-toi qu'il n'y a aucune ambiguïté et que la cohérence contexte <-> réponse est parfaite.
+            1. NOMBRE DE QUESTIONS : Génère EXACTEMENT 20 questions au total pour l'ensemble de l'examen.
+            2. VARIÉTÉ DES COMPÉTENCES (STRICT 5/5/5/5) : L'examen doit obligatoirement être structuré ainsi :
+               - 5 questions de Compréhension Orale (Listening)
+               - 5 questions de Compréhension Écrite (Reading)
+               - 5 questions d'Expression Écrite (Writing)
+               - 5 questions d'Expression Orale (Speaking)
+            3. DIFFICULTÉ PROGRESSIVE : Les questions doivent suivre une courbe de difficulté croissante adaptée au niveau ${level} :
+               - Questions 1-5 (Listening) : Facile
+               - Questions 6-10 (Reading) : Moyenne
+               - Questions 11-15 (Writing) : Difficile
+               - Questions 16-20 (Speaking) : Avancé
+            4. CONTEXTE RÉEL ET VARIABLE : Chaque question DOIT avoir son propre contexte unique. Ne réutilise pas le même texte ou la même situation pour deux questions.
+            5. STRUCTURE STRICTE ET LANGUES : Chaque question DOIT être totalement autonome et contenir :
+               - context : la situation ou le texte/dialogue de base spécifique à CETTE question. DOIT ÊTRE EN LANGUE CIBLE ("${lang}").
+               - instruction : consigne claire pour CETTE question. DOIT ÊTRE EN LANGUE D'EXPLICATION ("${explanationLang}").
+               - explanation : explication pédagogique de ce qui est testé (utilisé pour la correction interne). DOIT ÊTRE EN LANGUE D'EXPLICATION ("${explanationLang}").
+               - script : pour les questions orales, le script exact de l'audio. DOIT ÊTRE EN LANGUE CIBLE ("${lang}").
+               - question : LA QUESTION EN LANGUE CIBLE ("${lang}").
+               - options : (si QCM) LES OPTIONS EN LANGUE CIBLE ("${lang}"). DOIT ÊTRE UN TABLEAU DE 4 CHAINES DE CARACTÈRES UNIQUES.
+            6. TYPES DE QUESTIONS : Variez les formats :
+               - 'qcm' : Choix multiple classique. OBLIGATOIRE : Fournir EXACTEMENT 4 options uniques, pertinentes et non ambiguës dans 'options' qui correspondent parfaitement au contexte et à la question.
+               - 'true_false_not_given' : Vrai / Faux / Non Donné. OBLIGATOIRE : Fournir ces 3 options exactes dans 'options'.
+               - 'fill_in_the_blanks' : Texte à trous (phrase avec "_____").
+               - 'open' : Question ouverte (obligatoire pour 'writing' et 'speaking').
+            7. IMMERSION : Utiliser des scénarios réalistes (emails, conversations, annonces, dialogues naturels).
+            8. QUALITÉ DES DONNÉES : Vérifie qu'il n'y a pas de doublons dans les options, que chaque question QCM a bien ses options, et que les options sont logiquement liées à la question.
             
-            STRUCTURE DE L'EXAMEN :
-            - COMPRÉHENSION ORALE ('listening') : 4 ou 5 sections. Chaque section a un court dialogue/script dans 'context' et 1 SEULE question dans le tableau 'questions'.
-            - COMPRÉHENSION ÉCRITE ('qcm') : 1 ou 2 sections avec un texte long et riche (500 mots) dans 'context', suivies de 3 à 5 questions chacune.
-            - EXPRESSION ÉCRITE ('writing') : 1 ou 2 sections avec une mise en situation dans 'context' et 1 SEULE question dans le tableau 'questions'.
-            - EXPRESSION ORALE ('speaking') : 1 ou 2 sections avec une mise en situation et 1 SEULE question dans le tableau 'questions'.
+            STRUCTURE DE L'EXAMEN (Total 20 questions) :
+            - LISTENING (5 questions)
+            - READING (5 questions)
+            - WRITING (5 questions)
+            - SPEAKING (5 questions)
             
             Difficultés cibles de l'élève à tester si possible : ${difficulties}.
             
@@ -238,9 +256,13 @@ export const SmartExamService = {
                                             id: { type: "STRING" },
                                             type: { type: "STRING", description: "qcm, true_false_not_given, fill_in_the_blanks, open" },
                                             question: { type: "STRING" },
-                                            options: { type: "ARRAY", items: { type: "STRING" } }
+                                            options: { type: "ARRAY", items: { type: "STRING" } },
+                                            context: { type: "STRING" },
+                                            instruction: { type: "STRING" },
+                                            explanation: { type: "STRING" },
+                                            script: { type: "STRING" }
                                         },
-                                        required: ["id", "question"]
+                                        required: ["id", "type", "question", "context", "instruction"]
                                     }
                                 }
                             },
@@ -296,12 +318,12 @@ export const SmartExamService = {
         Questions & Réponses :
         `;
 
-        const parts: any[] = [];
+        const parts: { text?: string; inlineData?: { mimeType: string; data: string } }[] = [];
         
         for (const s of exam.sections) {
             const questionsToEval = s.questions && s.questions.length > 0 
                 ? s.questions 
-                : [{ id: s.id, question: s.question || '' }];
+                : [{ id: s.id, question: s.question || '' } as ExamQuestion];
             
             promptText += `\n--- SECTION: ${s.type.toUpperCase()} ---\n`;
             if (s.context) promptText += `CONTEXTE: ${s.context}\n`;
@@ -330,7 +352,9 @@ export const SmartExamService = {
         2. Pour les épreuves orales (fichiers audio joints), évalue rigoureusement la prononciation, la fluidité, l'accentuation et l'intonation.
         3. Estime le niveau RÉEL (CEFR) basé sur la performance globale.
            - IMPORTANT : Si le score est inférieur à 70/100, le niveau détecté NE PEUT PAS être supérieur au niveau visé (${exam.targetLevel}).
-        4. Calcule un score sur 100 (sois exigeant, les fautes de base pénalisent lourdement).
+        4. Calcule un score sur 100 de façon intelligente :
+           - Chaque question a un poids égal.
+           - Les fautes de grammaire et de vocabulaire dans les réponses ouvertes (Writing/Speaking) doivent être pénalisées avec précision.
            - Si "AUCUNE RÉPONSE", comptez 0 pour cette question.
         5. Évalue 5 critères spécifiques sur 100 :
            - grammar (Grammaire et Syntaxe)
@@ -338,12 +362,14 @@ export const SmartExamService = {
            - comprehension (Compréhension Écrite et Orale)
            - fluency (Fluidité et Cohérence)
            - pronunciation (Prononciation - mettez 0 si aucune épreuve orale n'est présente)
-        6. Donne un feedback constructif et professionnel en "${explanationLang}". 
+        6. Donne un rapport d'évaluation EXTRÊMEMENT DÉTAILLÉ et clair en "${explanationLang}". 
+           - L'étudiant doit comprendre exactement ses points forts et ses points faibles.
+           - Explique les erreurs commises dans les sections ouvertes.
            - Le ton doit être académique, objectif et encourageant.
-           - Fournis un feedback global dans 'feedback'.
-           - Fournis un feedback spécifique court (1-2 phrases) pour chaque critère dans 'criteriaFeedback'.
+           - Fournis un feedback global complet dans 'feedback'.
+           - Fournis un feedback spécifique détaillé (3-4 phrases) pour chaque critère dans 'criteriaFeedback'.
            - Si l'étudiant réussit (>= 70), félicite-le de manière formelle.
-           - Si l'étudiant échoue (< 70), explique-lui clairement les lacunes et donne-lui un plan d'action.
+           - Si l'étudiant échoue (< 70), explique-lui clairement les lacunes et donne-lui un plan d'action précis.
         7. Ne mentionne jamais que tu es une IA. Parle en tant que "Jury d'Examen TeacherMada".
         
         Output JSON.

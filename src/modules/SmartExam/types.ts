@@ -7,6 +7,10 @@ export interface ExamQuestion {
     type?: QuestionType;
     question: string;
     options?: string[]; // For QCM and true_false_not_given
+    context?: string; // Specific context for this question
+    instruction?: string; // Specific instruction
+    explanation?: string; // Pedagogical explanation
+    script?: string; // Audio script or detailed background
 }
 
 export interface ExamSection {

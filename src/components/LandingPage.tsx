@@ -33,7 +33,14 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, isDarkMode, toggleTh
 
   useEffect(() => {
       if (appStats) {
-          setStats(appStats);
+          // Use a timeout to avoid synchronous setState in effect warning
+          const timer = setTimeout(() => {
+              setStats(prev => {
+                  if (JSON.stringify(prev) === JSON.stringify(appStats)) return prev;
+                  return appStats;
+              });
+          }, 0);
+          return () => clearTimeout(timer);
       }
   }, [appStats]);
 

@@ -25,10 +25,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
   // Sync local settings when fetchedSettings changes
   useEffect(() => {
       if (fetchedSettings) {
-          setLocalSettings(prev => {
-              if (JSON.stringify(prev) === JSON.stringify(fetchedSettings)) return prev;
-              return fetchedSettings;
-          });
+          const timer = setTimeout(() => {
+              setLocalSettings(fetchedSettings);
+          }, 0);
+          return () => clearTimeout(timer);
       }
   }, [fetchedSettings]);
 

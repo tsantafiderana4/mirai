@@ -111,7 +111,7 @@ const AppContent: React.FC = () => {
     return () => {
         authListener.unsubscribe();
     };
-  }, []);
+  }, [setCurrentSession, setUser]);
 
   // Sync profile to Zustand store
   useEffect(() => {
@@ -194,7 +194,6 @@ const AppContent: React.FC = () => {
         preferences: newPreferences
     };
     await updateProfile(updated);
-    setShowCulturalIntro(true);
   };
 
   const handleIntroComplete = async () => {
@@ -525,6 +524,7 @@ const AppContent: React.FC = () => {
               onStartExercise={handleStartExerciseFromDash}
               onStartVoice={handleStartVoiceCall}
               onStartExam={handleStartExamFromDash}
+              onStartImmersion={() => { setShowDashboard(false); setShowCulturalIntro(true); }}
             />
           )}
 

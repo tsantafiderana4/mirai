@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect, useRef } from 'react';
-import { SmartExam } from '../types';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { SmartExam, ExamSection, ExamQuestion, QuestionType } from '../types';
 import { Clock, ArrowRight, CheckCircle, AlertCircle, Volume2, Loader2, Mic, MicOff } from 'lucide-react';
 import { generateSpeech } from '../../../services/geminiService';
 import { toast } from '../../../components/Toaster';
@@ -23,9 +23,52 @@ interface Props {
     onCancel: () => void;
 }
 
+interface FlatQuestion {
+    section: ExamSection;
+    question: ExamQuestion;
+    globalIndex: number;
+}
+
 const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
     const { t } = useTranslation();
-    const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
+    
+    const flatQuestions = useMemo(() => {
+        const flat: FlatQuestion[] = [];
+        let gIndex = 0;
+        exam.sections.forEach(sec => {
+            const qs = sec.questions && sec.questions.length > 0 
+                ? sec.questions.map((q, i) => ({ ...q, id: q.id || `${sec.id}_q${i}` }))
+                : [{ id: sec.id, question: sec.question || '', options: sec.options, type: sec.type === 'qcm' ? 'qcm' : undefined }];
+            
+            qs.forEach(q => {
+                // Filter out invalid QCM questions (no options or duplicate options)
+                if (q.type === 'qcm' || sec.type === 'qcm') {
+                    if (!q.options || q.options.length < 2) return;
+                    // Check for duplicates
+                    const uniqueOptions = new Set(q.options.map(o => o.trim().toLowerCase()));
+                    if (uniqueOptions.size !== q.options.length) {
+                        // Remove duplicates while keeping order
+                        const seen = new Set();
+                        q.options = q.options.filter(o => {
+                            const val = o.trim().toLowerCase();
+                            if (seen.has(val)) return false;
+                            seen.add(val);
+                            return true;
+                        });
+                        if (q.options.length < 2) return;
+                    }
+                }
+                flat.push({ 
+                    section: sec, 
+                    question: { ...q, type: q.type as QuestionType }, 
+                    globalIndex: gIndex++ 
+                });
+            });
+        });
+        return flat;
+    }, [exam]);
+
+    const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>(() => {
         const saved = localStorage.getItem(`exam_answers_${exam.id}`);
         return saved ? JSON.parse(saved) : {};
@@ -39,7 +82,7 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
 
     const [timeLeft, setTimeLeft] = useState(() => {
         const savedTime = localStorage.getItem(`exam_time_${exam.id}`);
-        return savedTime ? parseInt(savedTime, 10) : 15 * 60;
+        return savedTime ? parseInt(savedTime, 10) : 20 * 60;
     });
     const [warnings, setWarnings] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -49,10 +92,9 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
     });
     const [isListening, setIsListening] = useState(false);
     const audioCtxRef = useRef<AudioContext | null>(null);
-    const recognitionRef = useRef<any>(null);
+    const recognitionRef = useRef<any | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const audioChunksRef = useRef<Blob[]>([]);
-    const [history, setHistory] = useState<string[]>([]);
     const [isRecordingAudio, setIsRecordingAudio] = useState(false);
     const [recordingTime, setRecordingTime] = useState(0);
     const recordingTimerRef = useRef<number | null>(null);
@@ -72,8 +114,10 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
         };
     }, []);
 
-    const currentSection = exam.sections[currentSectionIndex];
-    const progress = ((currentSectionIndex + 1) / exam.sections.length) * 100;
+    const currentFlat = flatQuestions[currentQuestionIndex] || flatQuestions[0];
+    const currentSection = currentFlat.section;
+    const activeQuestion = currentFlat.question;
+    const progress = ((currentQuestionIndex + 1) / flatQuestions.length) * 100;
 
     const handleStart = () => {
         const elem = document.documentElement;
@@ -84,6 +128,19 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
         setHasStarted(true);
         toast.success(t('exam_runner.start_message'));
     };
+
+    const questionsToRender = [activeQuestion];
+    const activeQuestionId = activeQuestion.id;
+
+    const handleSubmit = useCallback(() => {
+        if (isSubmittingRef.current) return;
+        isSubmittingRef.current = true;
+        
+        localStorage.removeItem(`exam_answers_${exam.id}`);
+        localStorage.removeItem(`exam_time_${exam.id}`);
+        localStorage.removeItem(`exam_plays_${exam.id}`);
+        setTimeout(() => onFinish(answersRef.current), 0);
+    }, [exam.id, onFinish]);
 
     // Speech Recognition Effect
     useEffect(() => {
@@ -188,7 +245,7 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                 recognitionRef.current.stop();
             }
         };
-    }, [currentSection.id, exam.language, hasStarted]);
+    }, [currentSection.id, exam.language, hasStarted, activeQuestionId, handleSubmit, t]);
 
     const toggleListening = async (questionId: string) => {
         if (currentSection.type === 'speaking') {
@@ -215,8 +272,6 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
 
                 recognitionRef.current.start();
                 setIsListening(true);
-                // Save current state to history before starting new dictation
-                setHistory(prev => [...prev, answers[questionId] || '']);
             } catch (e: any) {
                 console.error("Microphone permission error:", e);
                 const isIframe = window.self !== window.top;
@@ -285,29 +340,7 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
         }
     };
 
-    const handleUndo = (questionId: string) => {
-        setHistory(prev => {
-            if (prev.length === 0) return prev;
-            const newHistory = [...prev];
-            const lastState = newHistory.pop();
-            setAnswers(a => ({ ...a, [questionId]: lastState || '' }));
-            return newHistory;
-        });
-    };
-
-    const handleRetrySpeaking = (questionId: string) => {
-        if (isListening && recognitionRef.current) {
-            recognitionRef.current.stop();
-            setIsListening(false);
-        }
-        setHistory(prev => [...prev, answers[questionId] || '']);
-        setAnswers(prev => ({ ...prev, [questionId]: '' }));
-        toast.info(t('exam_runner.confirm_reset') || "Réponse réinitialisée.");
-    };
-
     const handleManualChange = (questionId: string, val: string) => {
-        // Only save to history on debounce or significant change? 
-        // For now, let's just update state. Undo is mainly for "bulk" actions like dictation.
         setAnswers(prev => ({ ...prev, [questionId]: val }));
     };
 
@@ -320,11 +353,11 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
     }, [playCounts, exam.id]);
 
     const playAudio = async (text: string) => {
-        const currentPlays = playCounts[currentSection.id] || 0;
+        const currentPlays = playCounts[activeQuestionId] || 0;
         if (isPlaying || !text || currentPlays >= 2) return;
         
         setIsPlaying(true);
-        setPlayCounts(prev => ({ ...prev, [currentSection.id]: currentPlays + 1 }));
+        setPlayCounts(prev => ({ ...prev, [activeQuestionId]: currentPlays + 1 }));
         
         try {
             // Race between Gemini TTS and 30s timeout
@@ -408,14 +441,14 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                 document.exitFullscreen().catch(() => {});
             }
         };
-    }, [hasStarted]);
+    }, [hasStarted, t, onCancel]);
 
     useEffect(() => {
         if (warnings >= 3) {
             toast.error(t('exam_runner.cheat_cancel'));
             setTimeout(() => onCancel(), 0);
         }
-    }, [warnings]);
+    }, [warnings, t, onCancel]);
 
     useEffect(() => {
         if (!hasStarted) return;
@@ -432,42 +465,32 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
             });
         }, 1000);
         return () => clearInterval(timer);
-    }, [hasStarted]);
-
-    const questionsToRender = currentSection.questions && currentSection.questions.length > 0 
-        ? currentSection.questions.map((q, i) => ({ ...q, id: q.id || `${currentSection.id}_q${i}` }))
-        : [{ id: currentSection.id, question: currentSection.question || '', options: currentSection.options }];
-
-    const activeQuestionId = questionsToRender[0].id;
+    }, [hasStarted, exam.id, handleSubmit]);
 
     const handleAnswer = (questionId: string, val: string) => {
         setAnswers(prev => ({ ...prev, [questionId]: val }));
     };
 
+    const handleSkip = () => {
+        const activeQuestionId = flatQuestions[currentQuestionIndex].question.id;
+        if (!answers[activeQuestionId]) {
+            setAnswers(prev => ({ ...prev, [activeQuestionId]: 'IGNORED' }));
+        }
+        handleNext();
+    };
+
     const handleNext = () => {
-        // Check if all rendered questions have answers
-        const allAnswered = questionsToRender.every(q => answers[q.id] && answers[q.id].trim() !== '');
-        if (!allAnswered) {
-            toast.error(t('exam_runner.answer_required'));
+        const ans = answers[activeQuestionId];
+        if (!ans || ans.trim() === '') {
+            toast.error(t('exam_runner.answer_required') || 'Veuillez répondre à la question.');
             return;
         }
 
-        if (currentSectionIndex < exam.sections.length - 1) {
-            setCurrentSectionIndex(prev => prev + 1);
-            setHistory([]);
+        if (currentQuestionIndex < flatQuestions.length - 1) {
+            setCurrentQuestionIndex(prev => prev + 1);
         } else {
             handleSubmit();
         }
-    };
-
-    const handleSubmit = () => {
-        if (isSubmittingRef.current) return;
-        isSubmittingRef.current = true;
-        
-        localStorage.removeItem(`exam_answers_${exam.id}`);
-        localStorage.removeItem(`exam_time_${exam.id}`);
-        localStorage.removeItem(`exam_plays_${exam.id}`);
-        setTimeout(() => onFinish(answersRef.current), 0);
     };
 
     const formatTime = (seconds: number) => {
@@ -480,6 +503,30 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
         e.preventDefault();
         toast.error(t('exam_runner.copy_paste_warning'));
     };
+
+    if (flatQuestions.length === 0) {
+        return (
+            <div className="fixed inset-0 z-[90] bg-white dark:bg-slate-950 flex items-center justify-center p-6">
+                <div className="max-w-md w-full text-center">
+                    <div className="w-20 h-20 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <AlertCircle className="w-10 h-10 text-red-600 dark:text-red-400" />
+                    </div>
+                    <h2 className="text-2xl font-black text-slate-800 dark:text-white mb-4">
+                        Erreur de génération
+                    </h2>
+                    <p className="text-slate-600 dark:text-slate-400 mb-8">
+                        Désolé, cet examen contient des questions invalides et ne peut pas être lancé. Veuillez en générer un nouveau.
+                    </p>
+                    <button 
+                        onClick={onCancel}
+                        className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-lg transition-all"
+                    >
+                        Retour
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     if (!hasStarted) {
         return (
@@ -563,7 +610,7 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                     {/* Left: Question Count */}
                     <div className="z-10">
                         <span className="text-sm font-black text-slate-800 dark:text-white">
-                            Q. {currentSectionIndex + 1} <span className="text-slate-400 font-normal">/ {exam.sections.length}</span>
+                            Q. {currentQuestionIndex + 1} <span className="text-slate-400 font-normal">/ {flatQuestions.length}</span>
                         </span>
                     </div>
 
@@ -618,34 +665,34 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                              currentSection.type === 'writing' ? t('exam_runner.writing') : t('exam_runner.speaking')}
                         </span>
 
-                        {currentSection.type === 'listening' && currentSection.context && (
+                        {currentSection.type === 'listening' && (activeQuestion.script || activeQuestion.context || currentSection.context) && (
                             <div className="mb-8 p-6 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl border border-indigo-100 dark:border-indigo-800 flex flex-col items-center justify-center text-center relative overflow-hidden shadow-sm">
                                 <div className="absolute top-4 right-4 bg-white dark:bg-slate-800 px-2 py-1 rounded-md text-xs font-bold text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-700 shadow-sm">
-                                    {t('exam_runner.listens_count', { count: playCounts[currentSection.id] || 0 })}
+                                    {t('exam_runner.listens_count', { count: playCounts[activeQuestionId] || 0 })}
                                 </div>
                                 <button 
-                                    onClick={() => playAudio(currentSection.context!)}
-                                    disabled={isPlaying || (playCounts[currentSection.id] || 0) >= 2}
+                                    onClick={() => playAudio(activeQuestion.script || activeQuestion.context || currentSection.context!)}
+                                    disabled={isPlaying || (playCounts[activeQuestionId] || 0) >= 2}
                                     className="w-20 h-20 bg-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-indigo-700 hover:scale-105 transition-all disabled:opacity-50 disabled:scale-100 disabled:bg-slate-400 mb-4"
                                 >
                                     {isPlaying ? <Loader2 className="w-10 h-10 animate-spin" /> : <Volume2 className="w-10 h-10" />}
                                 </button>
                                 <p className="text-sm font-bold text-indigo-700 dark:text-indigo-300">
-                                    {isPlaying ? t('exam_runner.listening_active') : (playCounts[currentSection.id] || 0) >= 2 ? t('exam_runner.listening_limit') : t('exam_runner.click_to_listen')}
+                                    {isPlaying ? t('exam_runner.listening_active') : (playCounts[activeQuestionId] || 0) >= 2 ? t('exam_runner.listening_limit') : t('exam_runner.click_to_listen')}
                                 </p>
                                 <p className="text-xs text-slate-500 mt-2" dangerouslySetInnerHTML={{ __html: t('exam_runner.listening_max_note') }} />
                             </div>
                         )}
 
-                        {currentSection.instruction && (
+                        {(activeQuestion.instruction || currentSection.instruction) && (
                             <div className="mb-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border-l-4 border-indigo-500 text-slate-700 dark:text-slate-300 text-sm font-medium">
-                                {currentSection.instruction}
+                                {activeQuestion.instruction || currentSection.instruction}
                             </div>
                         )}
 
-                        {currentSection.type !== 'listening' && currentSection.context && (
+                        {currentSection.type !== 'listening' && (activeQuestion.context || currentSection.context) && (
                             <div className="mb-6 p-5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm text-slate-800 dark:text-slate-200 text-sm leading-relaxed whitespace-pre-wrap">
-                                {currentSection.context}
+                                {activeQuestion.context || currentSection.context}
                             </div>
                         )}
                     </div>
@@ -659,7 +706,7 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
 
                                 {(q.type === 'qcm' || q.type === 'true_false_not_given' || (!q.type && q.options && q.options.length > 0)) ? (
                                     <div className="space-y-3">
-                                        {q.options?.map((opt, optIdx) => (
+                                        {q.options?.map((opt: string, optIdx: number) => (
                                             <button
                                                 key={optIdx}
                                                 onClick={() => handleAnswer(q.id, opt)}
@@ -695,7 +742,20 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                                                                 onClick={() => setAnswers(prev => ({ ...prev, [q.id]: '' }))}
                                                                 className="px-4 py-2 text-sm font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
                                                             >
-                                                                {t('exam_runner.retake_audio')}
+                                                                {t('exam_runner.retake_audio') || "Recommencer l'enregistrement"}
+                                                            </button>
+                                                        </div>
+                                                    ) : answers[q.id] === 'IGNORED' ? (
+                                                        <div className="flex flex-col items-center gap-4 w-full">
+                                                            <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center">
+                                                                <MicOff className="w-8 h-8 text-slate-400" />
+                                                            </div>
+                                                            <p className="text-slate-600 dark:text-slate-400 font-bold">Question ignorée</p>
+                                                            <button
+                                                                onClick={() => setAnswers(prev => ({ ...prev, [q.id]: '' }))}
+                                                                className="px-4 py-2 text-sm font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+                                                            >
+                                                                {t('exam_runner.answer_speaking') || "Répondre à l'oral"}
                                                             </button>
                                                         </div>
                                                     ) : (
@@ -723,6 +783,12 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
                                                             <p className="text-sm text-slate-500 max-w-xs text-center">
                                                                 {t('exam_runner.speaking_instruction')}
                                                             </p>
+                                                            <button 
+                                                                onClick={() => handleAnswer(q.id, 'IGNORED')}
+                                                                className="mt-4 text-sm text-slate-500 hover:text-slate-700 underline font-medium"
+                                                            >
+                                                                {t('exam_runner.skip_speaking') || "Ignorer cette question (Je ne peux pas parler)"}
+                                                            </button>
                                                         </div>
                                                     )}
                                                 </div>
@@ -772,13 +838,19 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
             </div>
 
             {/* Footer */}
-            <div className="p-6 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex justify-end">
+            <div className="p-6 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex justify-end gap-4">
+                <button
+                    onClick={handleSkip}
+                    className="px-6 py-4 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-bold transition-colors"
+                >
+                    {t('exam_runner.ignore') || "Ignorer"}
+                </button>
                 <button
                     onClick={handleNext}
                     disabled={!questionsToRender.every(q => answers[q.id] && answers[q.id].trim() !== '')}
                     className="px-8 py-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-lg flex items-center gap-2 transition-all"
                 >
-                    {currentSectionIndex < exam.sections.length - 1 ? t('exam_runner.next') : t('exam_runner.finish')}
+                    {currentQuestionIndex < flatQuestions.length - 1 ? t('exam_runner.next') : t('exam_runner.finish')}
                     <ArrowRight className="w-5 h-5" />
                 </button>
             </div>
