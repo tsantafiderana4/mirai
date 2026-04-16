@@ -64,6 +64,7 @@ const AppContent: React.FC = () => {
   const [showAdmin, setShowAdmin] = useState(false);
   const [showVoiceCall, setShowVoiceCall] = useState(false); // State remonté
   const [verifyCertId, setVerifyCertId] = useState<string | null>(null); // Verification State
+  const [isRedirecting, setIsRedirecting] = useState(false);
   
   // Modes
   const [activeMode, setActiveMode] = useState<'chat' | 'exercise' | 'practice' | 'exam'>('chat');
@@ -231,6 +232,7 @@ const AppContent: React.FC = () => {
 
   const handleOnboardingComplete = async (prefs: UserPreferences) => {
     if (!user || !prefs) return;
+    setIsRedirecting(true);
     const selectedLang = prefs.targetLanguage || "English"; // Default fallback
     
     // Ensure preferences match UserPreferences type strictly
@@ -334,7 +336,7 @@ const AppContent: React.FC = () => {
       startExam();
   };
 
-  const needsOnboarding = !user?.preferences || !user?.preferences?.targetLanguage;
+  const needsOnboarding = !isRedirecting && (!user?.preferences || !user?.preferences?.targetLanguage);
 
   // Trigger Cultural Intro if not seen for current lang/level
   /* 
