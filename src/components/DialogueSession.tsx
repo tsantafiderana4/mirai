@@ -2,10 +2,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UserProfile, ChatMessage } from '../types';
 import { generateRoleplayResponse } from '../services/geminiService';
-import { CREDIT_COSTS } from '../services/creditService';
+import { CREDIT_COSTS, deductCredits } from '../services/creditService';
 import { useUserProfile } from '../hooks/queries/useUserProfile';
 import { useLearningSession } from '../hooks/queries/useLearningSession';
-import { X, Send, Mic, MessageCircle, Clock, GraduationCap, ShoppingBag, Plane, Stethoscope, Utensils, School, XCircle, Trophy, AlertTriangle, Loader2, Play, Briefcase, Info, ArrowLeft, RefreshCcw, BookOpen, Sparkles, Languages, BarChart, ArrowRight, Settings2, Globe, ChevronRight } from 'lucide-react';
+import { useAppStore } from '../store/useAppStore';
+import { X, Send, Mic, MessageCircle, Clock, ShoppingBag, Plane, Stethoscope, Utensils, XCircle, AlertTriangle, Loader2, Play, Briefcase, ArrowLeft, RefreshCcw, Sparkles, Languages, BarChart, ArrowRight, Settings2, Globe } from 'lucide-react';
 
 interface DialogueSessionProps {
   user: UserProfile;
@@ -50,6 +51,7 @@ const getSpeechLang = (targetLang: string) => {
 
 const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpdateUser, notify, onShowPayment }) => {
   const { refetch } = useUserProfile(user.id);
+  const updateUserCredits = useAppStore(state => state.updateUserCredits);
 
   // Flow State: 'setup' -> 'selection' -> 'intro' -> 'chat' -> 'score'
   const [step, setStep] = useState<'setup' | 'selection' | 'intro' | 'chat'>('setup');
@@ -145,6 +147,17 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
           setIsInitializing(true);
           
           try {
+              // Deduct credits for starting a session
+              const newBalance = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
+              if (newBalance !== null) {
+                  updateUserCredits(newBalance);
+              } else {
+                  notify("Erreur de déduction de crédits.", 'error');
+                  setIsInitializing(false);
+                  setStep('selection');
+                  return;
+              }
+
               await clearSession(); // Clear previous dialogue for this level/lang
               
               // Use session-specific user config
@@ -263,6 +276,16 @@ const DialogueSession: React.FC<DialogueSessionProps> = ({ user, onClose, onUpda
       }
 
       try {
+          // Deduct credits for dialogue message
+          const newBalance = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
+          if (newBalance !== null) {
+              updateUserCredits(newBalance);
+          } else {
+              notify("Erreur de déduction de crédits.", 'error');
+              setIsLoading(false);
+              return;
+          }
+
           const sessionUser = getSessionUser();
           const result = await generateRoleplayResponse(newHistory, scenario.prompt, sessionUser);
           

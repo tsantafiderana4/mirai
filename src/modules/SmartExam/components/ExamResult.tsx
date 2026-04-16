@@ -9,6 +9,7 @@ import { UserProfile } from '../../../types';
 import { CREDIT_COSTS } from '../../../services/creditService';
 import { toast } from '../../../components/Toaster';
 import { useTTS } from '../../../hooks/useTTS';
+import { useAppStore } from '../../../store/useAppStore';
 
 interface Props {
     result: ExamResultDetailed;
@@ -24,6 +25,7 @@ const ExamResult: React.FC<Props> = ({ result, user, onClose, initialShowCert = 
     const [isUnlocking, setIsUnlocking] = React.useState(false);
     const [showUnlockConfirm, setShowUnlockConfirm] = React.useState(false);
     const { generateSpeech, isLoading: isTTSLoading } = useTTS();
+    const updateUserCredits = useAppStore(state => state.updateUserCredits);
 
     if (showCert && certId) {
         return <CertificateView result={{ ...result, certificateId: certId }} onClose={() => setShowCert(false)} />;
@@ -47,6 +49,9 @@ const ExamResult: React.FC<Props> = ({ result, user, onClose, initialShowCert = 
             if (newCertId) {
                 setCertId(newCertId);
                 setShowUnlockConfirm(false);
+                // Update credits in store (unlockCertificate already calls it, but we ensure consistency)
+                const newBalance = user.credits - CREDIT_COSTS.CERTIFICATE_UNLOCK;
+                updateUserCredits(newBalance);
                 toast.success("Certificat débloqué avec succès !");
             } else {
                 toast.error("Échec du déblocage. Vérifiez vos crédits.");

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { UserProfile } from '../types';
 import { generateSpeech } from '../services/geminiService';
 import { CREDIT_COSTS, deductCredits } from '../services/creditService';
@@ -47,7 +47,15 @@ export const useAudio = (user: UserProfile | null, notify: (m: string, t?: strin
         
         // Deduct credits
         try {
-            await deductCredits(cost, user.id);
+            const newBalance = await deductCredits(cost, user.id);
+            if (newBalance !== null) {
+                // Update global state for immediate UI feedback
+                const { useAppStore } = await import('../store/useAppStore');
+                useAppStore.getState().updateUserCredits(newBalance);
+            } else {
+                notify(t('chat.credit_deduction_error'), "error");
+                return;
+            }
         } catch (e) {
             notify(t('chat.credit_deduction_error'), "error");
             return;

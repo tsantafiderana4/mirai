@@ -395,9 +395,9 @@ const ChatInterface: React.FC<Props> = ({
                             let structuredSections: { label: string, text: string }[] = [];
 
                             if (guideText.includes('|')) {
-                                const parts = guideText.split('|').map(p => p.trim());
+                                const parts = guideText.split('|').map((p: string) => p.trim());
                                 displayTitle = parts[0];
-                                structuredSections = parts.slice(1).map(p => {
+                                structuredSections = parts.slice(1).map((p: string) => {
                                     const colonIdx = p.indexOf(':');
                                     return {
                                         label: colonIdx > -1 ? p.substring(0, colonIdx).trim() : '',

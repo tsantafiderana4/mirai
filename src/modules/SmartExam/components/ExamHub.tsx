@@ -8,6 +8,7 @@ import { Loader2, ShieldCheck, FileText, AlertTriangle, CheckCircle, XCircle, Cl
 import ExamRunner from './ExamRunner';
 import ExamResult from './ExamResult';
 import { useTranslation } from '../../../contexts/LanguageContext';
+import { useAppStore } from '../../../store/useAppStore';
 
 interface Props {
     user: UserProfile;
@@ -101,6 +102,7 @@ const MicTest: React.FC<{ notify: (m: React.ReactNode, t?: 'success' | 'error') 
 const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment, notify }) => {
     const { t, setLanguage } = useTranslation();
     const language = useTranslation().language;
+    const updateUserCredits = useAppStore(state => state.updateUserCredits);
 
     const [view, setView] = useState<'hub' | 'runner' | 'result'>('hub');
     const [loading, setLoading] = useState(false);
@@ -132,6 +134,7 @@ const ExamHub: React.FC<Props> = ({ user, onClose, onUpdateUser, onShowPayment, 
                 // We just update the UI state here
                 const updatedUser = { ...user, credits: user.credits - cost };
                 onUpdateUser(updatedUser);
+                updateUserCredits(updatedUser.credits);
                 setCurrentExam(exam);
                 setView('runner');
             } else {
