@@ -25,6 +25,11 @@ const ExerciseSession: React.FC<ExerciseSessionProps> = ({ user, exercises, onCl
   const [showSummary, setShowSummary] = useState(false);
 
   const currentExercise = exercises[currentIndex];
+  
+  if (!currentExercise) {
+      return <div className="text-center p-4">Chargement...</div>;
+  }
+  
   const progress = ((currentIndex) / exercises.length) * 100;
 
   const normalizeText = (text: string) => text.trim().toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "");

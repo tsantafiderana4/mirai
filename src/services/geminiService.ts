@@ -200,9 +200,17 @@ export async function* sendMessageStream(
   message: string,
   user: UserProfile,
   history: ChatMessage[],
-  sessionType: 'lesson' | 'exercise' | 'dialogue' | 'exam' | 'call' = 'lesson'
+  sessionType: 'lesson' | 'exercise' | 'dialogue' | 'exam' | 'call' = 'lesson',
+  overrides?: { language?: string, level?: string }
 ) {
   if (!user.preferences) throw new Error("Profil incomplet");
+
+  // Fusionner les préférences avec les surcharges de session
+  const effectivePrefs = {
+      ...user.preferences,
+      targetLanguage: overrides?.language || user.preferences.targetLanguage,
+      level: overrides?.level || user.preferences.level
+  };
 
   // OPTIMIZATION: Limit history to last 15 messages to reduce latency and token usage
   const recentHistory = history.slice(-15);
@@ -214,7 +222,7 @@ export async function* sendMessageStream(
     .join('\n\n');
 
   const finalMessage = contextPrompt ? `Contexte précédent:\n${contextPrompt}\n\nNouveau message de l'élève: ${message}` : message;
-  const systemInstruction = SYSTEM_PROMPT_TEMPLATE(user, user.preferences!, sessionType);
+  const systemInstruction = SYSTEM_PROMPT_TEMPLATE(user, effectivePrefs, sessionType);
 
   let success = false;
   let lastError: Error | null = null;

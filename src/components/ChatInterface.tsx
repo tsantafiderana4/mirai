@@ -50,14 +50,32 @@ const ChatInterface: React.FC<Props> = ({
   onStartPractice, onStartExercise, onStartVoiceCall, onStartExam,
   notify, onShowPayment, onChangeCourse, onShowCulturalIntro
 }) => {
-  const { user, setUser, setCurrentSession } = useAppStore();
+  const { user, setUser, setCurrentSession, currentSession } = useAppStore();
   const { refetch: refetchUser } = useUserProfile(user?.id || '');
-  const { session: learningSession, refetch: refetchSession, updateSession } = useLearningSession(user?.id || '', user?.preferences);
+  
+  // Prioriser langue et niveau de la session active si elle existe, sinon préférences utilisateur
+  const activeLang = currentSession?.language || user?.preferences?.targetLanguage;
+  const activeLevel = currentSession?.level || user?.preferences?.level;
+
+  const { session: learningSession, refetch: refetchSession, updateSession } = useLearningSession(
+      user?.id || '', 
+      { ...user?.preferences, targetLanguage: activeLang, level: activeLevel } as any
+  );
+  
+  const activeSession = currentSession || learningSession || null;
   const { notifications } = useNotifications(user?.id || '');
   const unreadCount = notifications?.filter(n => !n.read).length || 0;
   const { t } = useTranslation();
 
-  const { messages, setMessages, isStreaming, processMessage } = useChat(user, learningSession || null, updateSession, notify, onShowPayment);
+  const { messages, setMessages, isStreaming, processMessage } = useChat(user, activeSession, updateSession, notify, onShowPayment);
+
+  // Synchroniser les messages lors du changement de session active
+  useEffect(() => {
+    if (activeSession?.messages) {
+      setMessages(activeSession.messages);
+    }
+  }, [activeSession, setMessages]);
+  
   const { speakingMessageId, isLoadingAudio, playMessageAudio, stopSpeaking } = useAudio(user, notify, onShowPayment);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -160,8 +178,8 @@ const ChatInterface: React.FC<Props> = ({
   useEffect(() => {
       if (!user) return;
       if (messages.length === 0) {
-          const targetLang = user.preferences?.targetLanguage;
-          const level = user.preferences?.level;
+          const targetLang = currentSession?.language || user.preferences?.targetLanguage;
+          const level = currentSession?.level || user.preferences?.level;
 
           const welcomeTitle = t('chat.welcome_title');
           const welcomeBody = t('chat.welcome_text', { 
@@ -195,12 +213,15 @@ const ChatInterface: React.FC<Props> = ({
   const progressData = useMemo(() => {
       if (!user) return { percentage: 0, nextLevel: 'A1', currentLevel: 'A1', completed: 0, total: 50 };
       
-      const isChinese = user.preferences?.targetLanguage?.includes('Chinois');
+      const targetLang = currentSession?.language || user.preferences?.targetLanguage || '';
+      const targetLevel = currentSession?.level || user.preferences?.level || 'A1';
+
+      const isChinese = targetLang.includes('Chinois');
       const levels = isChinese 
           ? ['HSK 1', 'HSK 2', 'HSK 3', 'HSK 4', 'HSK 5', 'HSK 6']
           : ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
           
-      const currentLevel = user.preferences?.level || (isChinese ? 'HSK 1' : 'A1');
+      const currentLevel = targetLevel;
       const currentIndex = levels.indexOf(currentLevel);
       const nextLevel = currentIndex !== -1 && currentIndex < levels.length - 1 ? levels[currentIndex + 1] : 'Expert';
       
@@ -210,13 +231,13 @@ const ChatInterface: React.FC<Props> = ({
       const percentage = Math.min((effectiveCompleted / lessonsPerLevel) * 100, 100);
       
       return { percentage: Math.round(percentage), nextLevel, currentLevel, completed: effectiveCompleted, total: lessonsPerLevel };
-  }, [user, currentLessonNum]);
+  }, [user, currentLessonNum, currentSession]);
 
   const userFlagUrl = useMemo(() => {
       if (!user) return '';
-      const lang = user.preferences?.targetLanguage || '';
+      const lang = currentSession?.language || user.preferences?.targetLanguage || '';
       return getFlagUrl(lang.split(' ')[0]);
-  }, [user]);
+  }, [user, currentSession]);
 
   const isLowCredits = user ? user.credits < 5 : false;
 

@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { UserProfile, SmartNotification, VoiceName, Certificate, LearningSession, UserPreferences } from '../types';
+import { UserProfile, SmartNotification, VoiceName, Certificate, LearningSession, UserPreferences, TargetLanguage, LanguageLevel } from '../types';
 import { X, LogOut, Sun, Moon, Book, Trophy, Loader2, Save, Globe, Download, ShieldCheck, Upload, CreditCard, Plus, AlertTriangle, MessageCircle, Phone, Brain, ArrowRight, Award, ChevronRight, User, Bell, Check, Trash2, Info, CheckCircle, XCircle, BarChart3, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useCertificates } from '../hooks/queries/useCertificates';
@@ -28,6 +28,7 @@ interface Props {
   onStartVoice: () => void;
   onStartExam: () => void;
   onStartImmersion: () => void;
+  onResumeSession: (session: LearningSession) => void;
 }
 
 interface EnrichedCertificate extends Certificate {
@@ -36,9 +37,9 @@ interface EnrichedCertificate extends Certificate {
 }
 
 const SmartDashboard: React.FC<Props> = ({ 
-    onClose, onOpenAdmin, onShowPayment, onStartPractice, onStartExercise, onStartVoice, onStartExam, onStartImmersion 
+    onClose, onOpenAdmin, onShowPayment, onStartPractice, onStartExercise, onStartVoice, onStartExam, onStartImmersion, onResumeSession 
 }) => {
-  const { user, setUser, isDarkMode, toggleDarkMode, logout } = useAppStore();
+  const { user, setUser, isDarkMode, toggleDarkMode, logout, setCurrentSession, currentSession } = useAppStore();
   const { t, setLanguage } = useTranslation();
   const language = useTranslation().language;
 
@@ -50,7 +51,10 @@ const SmartDashboard: React.FC<Props> = ({
   const { notifications, markRead, markAllRead, deleteNotification } = useNotifications(user?.id);
   const { updateProfile } = useUserProfile(user?.id);
   const { clearSession } = useLearningSession(user?.id || '', user?.preferences);
-  const { data: sessionHistory = [], isLoading: isLoadingHistory } = useSessionHistory(user?.id);
+  const { data: sessionHistory = [], isLoading: isLoadingHistory, deleteSession, deleteAllSessions } = useSessionHistory(user?.id);
+  const [sessionToDelete, setSessionToDelete] = useState<LearningSession | null>(null);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+  const [isDeletingSession, setIsDeletingSession] = useState(false);
 
   const unreadCount = notifications.filter(n => !n.read).length;
   const [selectedResult, setSelectedResult] = useState<ExamResultDetailed | null>(null);
@@ -158,6 +162,20 @@ const SmartDashboard: React.FC<Props> = ({
       setActiveTab('menu');
   };
 
+  const updatePrefs = async (key: keyof UserPreferences, value: string) => {
+      if (!user) return;
+      const updated: UserProfile = { 
+          ...user,
+          preferences: {
+              ...(user.preferences || {}),
+              [key]: value
+          } as UserPreferences
+      };
+      await updateProfile(updated);
+      setUser(updated);
+      toast.success(t('common.success'));
+  };
+
   const toggleExplanationLang = async () => {
       const next = language === 'fr' ? 'mg' : 'fr';
       setLanguage(next);
@@ -180,6 +198,33 @@ const SmartDashboard: React.FC<Props> = ({
       setIsImporting(false);
       
       toast.error(t('dashboard.invalid_file'));
+  };
+
+  const handleDeleteSession = async () => {
+    if (!sessionToDelete) return;
+    setIsDeletingSession(true);
+    try {
+        await deleteSession(sessionToDelete.id);
+        toast.success(t('dashboard.delete_success') || 'Session supprimée');
+        setSessionToDelete(null);
+    } catch {
+        toast.error(t('common.error') || 'Erreur lors de la suppression');
+    } finally {
+        setIsDeletingSession(false);
+    }
+  };
+
+  const handleDeleteAllSessions = async () => {
+    setIsDeletingSession(true);
+    try {
+        await deleteAllSessions();
+        toast.success('Historique entièrement supprimé');
+        setShowDeleteAllConfirm(false);
+    } catch {
+        toast.error(t('common.error') || 'Erreur lors de la suppression');
+    } finally {
+        setIsDeletingSession(false);
+    }
   };
 
   const handleMarkRead = async (id: string, e?: React.MouseEvent) => {
@@ -251,10 +296,18 @@ const SmartDashboard: React.FC<Props> = ({
 
   const handleDeleteConversation = async () => {
       if (!user) return;
-      await clearSession();
-      toast.success(t('dashboard.conv_deleted'));
-      onClose();
-      window.location.reload(); 
+      setIsDeletingSession(true);
+      try {
+          await clearSession();
+          toast.success(t('dashboard.conv_deleted'));
+          setShowDeleteConfirm(false);
+          onClose();
+          window.location.reload(); 
+      } catch {
+          toast.error(t('common.error'));
+      } finally {
+          setIsDeletingSession(false);
+      }
   };
 
   const handleConfirmUnlock = async () => {
@@ -312,7 +365,7 @@ const SmartDashboard: React.FC<Props> = ({
                         </div>
                     </div>
                     <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-emerald-500 border-2 border-white dark:border-slate-900 rounded-full flex items-center justify-center text-white shadow-sm">
-                        <span className="text-[8px] font-black">{user.preferences?.level?.split(' ')[0] || 'A1'}</span>
+                        <span className="text-[8px] font-black">{(currentSession?.level || user.preferences?.level || 'A1').split(' ')[0]}</span>
                     </div>
                 </div>
 
@@ -321,7 +374,7 @@ const SmartDashboard: React.FC<Props> = ({
                     <h2 className="text-base font-black text-slate-900 dark:text-white leading-tight truncate w-full">{user.username}</h2>
                     <div className="flex items-center gap-1.5 mt-1 text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
                         <Globe className="w-3 h-3" />
-                        <span className="uppercase truncate max-w-[120px]">{user.preferences?.targetLanguage}</span>
+                        <span className="uppercase truncate max-w-[120px]">{currentSession?.language || user.preferences?.targetLanguage}</span>
                     </div>
                 </div>
 
@@ -455,7 +508,7 @@ const SmartDashboard: React.FC<Props> = ({
                     {/* CULTURAL IMMERSION */}
                     <div className="space-y-3">
                         <button onClick={onStartImmersion} className="w-full p-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20">
-                            {language === 'mg' ? 'Tsara ho fantatra' : 'Bon à savoir'} @{user?.preferences?.targetLanguage}
+                            {language === 'mg' ? 'Tsara ho fantatra' : 'Bon à savoir'} @{currentSession?.language || user?.preferences?.targetLanguage}
                         </button>
                     </div>
 
@@ -541,6 +594,37 @@ const SmartDashboard: React.FC<Props> = ({
                         </div>
                     )}
 
+                    {/* Quick Settings */}
+                    <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Réglages Rapides</h3>
+                        
+                        <div className="space-y-2">
+                            <label className="text-[10px] uppercase font-bold text-slate-500">Langue cible</label>
+                            <select 
+                                value={currentSession?.language || user.preferences?.targetLanguage} 
+                                onChange={(e) => updatePrefs('targetLanguage', e.target.value)}
+                                className="w-full text-sm p-3 bg-white dark:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-600 focus:ring-2 focus:ring-indigo-500"
+                            >
+                                {Object.values(TargetLanguage).map((lang) => (
+                                    <option key={lang} value={lang}>{lang}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-[10px] uppercase font-bold text-slate-500">Niveau</label>
+                            <select 
+                                value={currentSession?.level || user.preferences?.level} 
+                                onChange={(e) => updatePrefs('level', e.target.value)}
+                                className="w-full text-sm p-3 bg-white dark:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-600 focus:ring-2 focus:ring-indigo-500"
+                            >
+                                {['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'HSK 1', 'HSK 2', 'HSK 3', 'HSK 4', 'HSK 5', 'HSK 6'].map((level) => (
+                                    <option key={level} value={level}>{level}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
                     {/* Settings List */}
                     <div className="space-y-1 pt-4">
                         <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">{t('dashboard.preferences')}</h3>
@@ -579,32 +663,11 @@ const SmartDashboard: React.FC<Props> = ({
                         </label>
                     </div>
 
-                    {showDeleteConfirm ? (
-                        <div className="mt-2 p-4 bg-red-50 dark:bg-red-900/20 rounded-2xl border border-red-100 dark:border-red-900/50 animate-fade-in">
-                            <div className="flex items-center gap-3 mb-3 text-red-600 dark:text-red-400">
-                                <AlertTriangle className="w-5 h-5" />
-                                <span className="font-bold text-sm">{t('dashboard.confirm_delete_conv')}</span>
-                            </div>
-                            <div className="flex gap-2">
-                                <button 
-                                    onClick={() => setShowDeleteConfirm(false)}
-                                    className="flex-1 py-2 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-xs"
-                                >
-                                    {t('common.cancel')}
-                                </button>
-                                <button 
-                                    onClick={handleDeleteConversation}
-                                    className="flex-1 py-2 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-colors text-xs shadow-lg shadow-red-500/20"
-                                >
-                                    {t('common.confirm')}
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
+                    <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
                         <button onClick={() => setShowDeleteConfirm(true)} className="w-full py-3 mt-2 bg-red-50 dark:bg-red-900/10 text-red-500 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors text-xs">
                             <Trash2 className="w-4 h-4" /> {t('dashboard.delete_conv')}
                         </button>
-                    )}
+                    </div>
                 </div>
             )}
 
@@ -859,9 +922,19 @@ const SmartDashboard: React.FC<Props> = ({
                                 <ChevronRight className="w-3 h-3 rotate-180"/> {t('dashboard.back_dashboard')}
                             </button>
                             
-                            <h3 className="text-lg font-black text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-                                <Book className="w-5 h-5 text-indigo-500" /> Historique d'Apprentissage
-                            </h3>
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-lg font-black text-slate-800 dark:text-white flex items-center gap-2">
+                                    <Book className="w-5 h-5 text-indigo-500" /> Historique d'Apprentissage
+                                </h3>
+                                {sessionHistory.length > 0 && (
+                                    <button 
+                                        onClick={() => setShowDeleteAllConfirm(true)}
+                                        className="text-[10px] font-bold text-red-500 hover:text-red-600 bg-red-50 dark:bg-red-900/20 px-3 py-1.5 rounded-xl border border-red-100 dark:border-red-900/30 transition-colors flex items-center gap-1.5 shadow-sm"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" /> Tout supprimer
+                                    </button>
+                                )}
+                            </div>
 
                             {isLoadingHistory ? (
                                 <div className="flex justify-center py-8">
@@ -892,14 +965,38 @@ const SmartDashboard: React.FC<Props> = ({
                                                         {new Date(session.updatedAt).toLocaleDateString()}
                                                     </span>
                                                 </div>
-                                                <div className="text-xs font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                                                    {session.language} • {session.level}
-                                                    <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-indigo-500 transition-colors" />
+                                                <div className="flex items-center gap-2">
+                                                    <div className="text-xs font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                                                        {session.language} • {session.level}
+                                                    </div>
+                                                    <button 
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setSessionToDelete(session);
+                                                        }}
+                                                        className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 text-red-500 rounded-lg transition-colors"
+                                                        title="Supprimer cette session"
+                                                    >
+                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
                                                 </div>
                                             </div>
                                             <div className="text-sm text-slate-600 dark:text-slate-300">
                                                 {session.messages.length} messages échangés
                                             </div>
+                                            {(session.type === 'lesson' || session.type === 'dialogue') && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setCurrentSession(session);
+                                                        onResumeSession(session);
+                                                        onClose();
+                                                    }}
+                                                    className="mt-3 w-full py-2 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-colors"
+                                                >
+                                                    Reprendre
+                                                </button>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -1073,6 +1170,116 @@ const SmartDashboard: React.FC<Props> = ({
                           <button 
                             onClick={() => setCertToUnlock(null)}
                             disabled={isUnlocking}
+                            className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95"
+                          >
+                              Annuler
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* Delete Session Confirmation Modal */}
+      {sessionToDelete && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-fade-in">
+              <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-200 dark:border-slate-800 animate-scale-in">
+                  <div className="p-8 text-center">
+                      <div className="w-20 h-20 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mx-auto mb-6">
+                          <AlertTriangle className="w-10 h-10" />
+                      </div>
+                      <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-3">
+                          Supprimer cette session ?
+                      </h3>
+                      <p className="text-slate-600 dark:text-slate-400 mb-8 leading-relaxed text-sm">
+                          Cette action est irréversible. Toutes les données de cette session de <strong>{sessionToDelete.language}</strong> ({sessionToDelete.level}) seront définitivement effacées.
+                      </p>
+                      
+                      <div className="space-y-3">
+                          <button 
+                            onClick={handleDeleteSession}
+                            disabled={isDeletingSession}
+                            className="w-full py-4 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl shadow-xl shadow-red-500/20 transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
+                          >
+                              {isDeletingSession ? <Loader2 className="w-6 h-6 animate-spin" /> : <Trash2 className="w-5 h-5" />}
+                              Supprimer définitivement
+                          </button>
+                          <button 
+                            onClick={() => setSessionToDelete(null)}
+                            disabled={isDeletingSession}
+                            className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95"
+                          >
+                              Annuler
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+      {/* Delete Current Session Confirmation Modal */}
+      {showDeleteConfirm && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-fade-in">
+              <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-200 dark:border-slate-800 animate-scale-in">
+                  <div className="p-8 text-center">
+                      <div className="w-20 h-20 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mx-auto mb-6">
+                          <MessageCircle className="w-10 h-10" />
+                      </div>
+                      <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-3">
+                          Supprimer la session ?
+                      </h3>
+                      <p className="text-slate-600 dark:text-slate-400 mb-8 leading-relaxed text-sm">
+                          Ceci effacera la conversation actuelle ainsi que les progrès de la session active de <strong>{currentSession?.language || user.preferences?.targetLanguage}</strong>.
+                      </p>
+                      
+                      <div className="space-y-3">
+                          <button 
+                            onClick={handleDeleteConversation}
+                            disabled={isDeletingSession}
+                            className="w-full py-4 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl shadow-xl shadow-red-500/20 transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
+                          >
+                              {isDeletingSession ? <Loader2 className="w-6 h-6 animate-spin" /> : <Trash2 className="w-5 h-5" />}
+                              Oui, supprimer
+                          </button>
+                          <button 
+                            onClick={() => setShowDeleteConfirm(false)}
+                            disabled={isDeletingSession}
+                            className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95"
+                          >
+                              Annuler
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* Delete All Sessions Confirmation Modal */}
+      {showDeleteAllConfirm && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-fade-in">
+              <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-200 dark:border-slate-800 animate-scale-in">
+                  <div className="p-8 text-center">
+                      <div className="w-20 h-20 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mx-auto mb-6">
+                          <Trash2 className="w-10 h-10" />
+                      </div>
+                      <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-3">
+                          Vider tout l'historique ?
+                      </h3>
+                      <p className="text-slate-600 dark:text-slate-400 mb-8 leading-relaxed text-sm">
+                          Cette action est irréversible. Toutes vos sessions d'apprentissage passées seront définitivement effacées du cloud.
+                      </p>
+                      
+                      <div className="space-y-3">
+                          <button 
+                            onClick={handleDeleteAllSessions}
+                            disabled={isDeletingSession}
+                            className="w-full py-4 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl shadow-xl shadow-red-500/20 transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
+                          >
+                              {isDeletingSession ? <Loader2 className="w-6 h-6 animate-spin" /> : <Trash2 className="w-5 h-5" />}
+                              Oui, tout supprimer
+                          </button>
+                          <button 
+                            onClick={() => setShowDeleteAllConfirm(false)}
+                            disabled={isDeletingSession}
                             className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95"
                           >
                               Annuler

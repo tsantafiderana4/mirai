@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ChatMessage, UserProfile, LearningSession } from '../types';
 import { sendMessageStream } from '../services/geminiService';
 import { CREDIT_COSTS, deductCredits } from '../services/creditService';
@@ -11,6 +11,11 @@ export const useChat = (user: UserProfile | null, session: LearningSession | nul
     const { t } = useTranslation();
     const updateUserCredits = useAppStore(state => state.updateUserCredits);
 
+    // Synchroniser les messages si la session change
+    useEffect(() => {
+        setMessages(session?.messages || []);
+    }, [session]);
+    
     const processMessage = async (text: string) => {
         if (!user || isStreaming) return;
 
@@ -37,7 +42,13 @@ export const useChat = (user: UserProfile | null, session: LearningSession | nul
                 return;
             }
 
-            const stream = sendMessageStream(text, user, messages, session?.type || 'lesson');
+            const stream = sendMessageStream(
+                text, 
+                user, 
+                messages, 
+                session?.type || 'lesson',
+                session ? { language: session.language, level: session.level } : undefined
+            );
             let fullText = "";
             const aiMsgId = (Date.now() + 1).toString();
             setMessages(prev => [...prev, { id: aiMsgId, role: 'model', text: "", timestamp: Date.now() }]);

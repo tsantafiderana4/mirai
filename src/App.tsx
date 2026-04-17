@@ -578,6 +578,30 @@ const AppContent: React.FC = () => {
               onStartVoice={handleStartVoiceCall}
               onStartExam={handleStartExamFromDash}
               onStartImmersion={() => { setShowDashboard(false); setShowCulturalIntro(true); }}
+              onResumeSession={(session) => {
+                  const typeMap: any = {
+                      exercise: 'exercise',
+                      dialogue: 'practice',
+                      exam: 'exam',
+                      lesson: 'chat'
+                  };
+
+                  // 1. Fermer le Dashboard
+                  setShowDashboard(false);
+
+                  // 2. Réinitialiser les modes conflictuels
+                  setShowVoiceCall(false);
+                  
+                  // 3. Rediriger selon le type
+                  if (session.type === 'call') {
+                      setShowVoiceCall(true);
+                  } else {
+                      setActiveMode(typeMap[session.type] || 'chat');
+                  }
+                  
+                  // 4. Feedback utilisateur
+                  toast.success("Reprise de la session...");
+              }}
             />
           )}
 
