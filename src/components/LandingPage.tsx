@@ -433,8 +433,12 @@ const LandingPage: React.FC<LandingPageProps> = ({ onStart, isDarkMode, toggleTh
             <div className="flex gap-6 items-center">
                 <button onClick={() => setActiveLegal('terms')} className="text-slate-500 hover:text-indigo-600 transition-colors text-sm font-bold">{t('legal.terms')}</button>
                 <button onClick={() => setActiveLegal('privacy')} className="text-slate-500 hover:text-indigo-600 transition-colors text-sm font-bold">{t('legal.privacy')}</button>
-                <a href="https://www.facebook.com/TeacherMadaFormation" target="_blank" className="text-slate-500 hover:text-blue-600 transition-colors">
-                    <Facebook className="w-5 h-5" />
+                <a href="https://wa.me/261349310268" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-emerald-500 transition-colors flex items-center gap-1.5" title="WhatsApp">
+                    <MessageCircle className="w-5 h-5 fill-emerald-500/10" />
+                    <span className="text-xs font-bold hidden sm:inline">WhatsApp</span>
+                </a>
+                <a href="https://www.facebook.com/TeacherMadaFormation" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-blue-600 transition-colors" title="Facebook">
+                    <Facebook className="w-5 h-5 fill-blue-500/10" />
                 </a>
             </div>
 

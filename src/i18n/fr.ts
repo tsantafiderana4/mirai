@@ -88,9 +88,9 @@ export const fr = {
   landing: {
     hero_badge: "Pédagogie 2.0",
     hero_title_prefix: "APPRENEZ",
-    hero_words: ["GRATUITEMENT", "INTELLIGEMMENT", "RAPIDEMENT", "NATURELLEMENT", "EFFICACEMENT"],
-    hero_desc: "Imaginez-vous parler Chinois, Anglais ou Allemand avec {highlight} dès le premier jour.",
-    hero_desc_highlight: "confiance",
+    hero_words: ["GRATUITEMENT", "RAPIDEMENT", "SEREINEMENT", "SIMPLEMENT", "FACILEMENT", "SUREMENT"],
+    hero_desc: "Imaginez-vous capable de {highlight} dès le premier jour.",
+    hero_desc_highlight: "parler une langue étrangère",
     hero_subdesc: "TeacherMada est votre professeur personnel : disponible 24/7, patient, et incroyablement efficace.",
     cta_create_account: "Créer mon compte gratuit",
     cta_install_app: "Installer l'App",
