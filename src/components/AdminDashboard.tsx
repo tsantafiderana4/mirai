@@ -56,6 +56,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
   const [editEmail, setEditEmail] = useState('');
   const [editPassword, setEditPassword] = useState('');
 
+  // State for user deletion
+  const [deletingUser, setDeletingUser] = useState<UserProfile | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const refreshData = async () => {
       await refetchAll();
   };
@@ -129,6 +133,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
       } catch (_e) {
           console.error(_e);
           notify("Erreur lors de la sauvegarde. Vérifiez les permissions DB.", 'error');
+      }
+  };
+
+  const { deleteUser } = useAdmin();
+
+  const handleDeleteUser = async () => {
+      if (!deletingUser) return;
+      setIsDeleting(true);
+      try {
+          await deleteUser(deletingUser.id);
+          notify(`L'utilisateur ${deletingUser.username} a été supprimé définitivement.`, 'success');
+          setDeletingUser(null);
+      } catch (error) {
+          console.error(error);
+          notify("Erreur lors de la suppression de l'utilisateur.", 'error');
+      } finally {
+          setIsDeleting(false);
       }
   };
 
@@ -294,6 +315,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                                             setEditPassword('');
                                         }} className="p-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shadow-sm">
                                             <Settings className="w-5 h-5"/>
+                                        </button>
+                                        <button onClick={() => setDeletingUser(user)} className="p-3 bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl hover:bg-red-200 dark:hover:bg-red-900/30 transition-colors shadow-sm">
+                                            <Trash2 className="w-5 h-5"/>
                                         </button>
                                         <button onClick={() => toggleSuspend(user)} className={`px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest border transition-all whitespace-nowrap ${user.isSuspended ? 'border-red-500 text-red-500 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/30' : 'border-emerald-500 text-emerald-500 bg-emerald-50 dark:bg-emerald-900/10 hover:bg-emerald-100 dark:hover:bg-emerald-900/30'}`}>
                                             {user.isSuspended ? 'Suspendu' : 'Actif'}
@@ -591,6 +615,42 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
         )}
 
       </div>
+
+      {/* Deletion Confirmation Modal */}
+      {deletingUser && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-fade-in">
+              <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 border border-slate-200 dark:border-white/5 animate-scale-in text-center">
+                  <div className="w-20 h-20 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center text-red-600 mb-6 mx-auto">
+                      <Trash2 className="w-10 h-10" />
+                  </div>
+                  <h3 className="text-2xl font-black mb-2 text-slate-800 dark:text-white">Confirmer la suppression</h3>
+                  <p className="text-slate-500 dark:text-slate-400 mb-8 font-medium">
+                      Êtes-vous sûr de vouloir supprimer définitivement le compte de <span className="font-bold text-slate-800 dark:text-slate-200">{deletingUser.username}</span> ? Cette action est irréversible et supprimera toutes ses données.
+                  </p>
+                  <div className="flex gap-3">
+                      <button 
+                        disabled={isDeleting}
+                        onClick={() => setDeletingUser(null)} 
+                        className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+                      >
+                          Annuler
+                      </button>
+                      <button 
+                        disabled={isDeleting}
+                        onClick={handleDeleteUser} 
+                        className="flex-1 py-4 bg-red-600 text-white font-black rounded-2xl shadow-xl shadow-red-600/20 hover:scale-[1.02] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                          {isDeleting ? (
+                              <>
+                                  <Loader2 className="w-5 h-5 animate-spin" />
+                                  Suppression...
+                              </>
+                          ) : "Supprimer"}
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 };

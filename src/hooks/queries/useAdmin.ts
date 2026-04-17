@@ -143,6 +143,16 @@ export const useAdmin = () => {
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'users'] })
     });
 
+    const deleteUser = useMutation({
+        mutationFn: async (userId: string) => {
+            const { error } = await supabase.rpc('admin_delete_user', {
+                p_user_id: userId
+            });
+            if (error) throw error;
+        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'users'] })
+    });
+
     const resolveRequest = useMutation({
         mutationFn: async ({ reqId, status }: { reqId: string, status: 'approved' | 'rejected' }) => {
             const { error } = await supabase.from('admin_requests').update({ status }).eq('id', reqId);
@@ -196,6 +206,7 @@ export const useAdmin = () => {
         updateSettings: updateSettings.mutateAsync,
         updateUser: updateUser.mutateAsync,
         updateUserAuth: updateUserAuth.mutateAsync,
+        deleteUser: deleteUser.mutateAsync,
         addCredits: addCredits.mutateAsync,
         resolveRequest: resolveRequest.mutateAsync,
         addCoupon: addCoupon.mutateAsync,

@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { UserProfile, SmartNotification, VoiceName, Certificate, LearningSession, UserPreferences, TargetLanguage, LanguageLevel } from '../types';
+import { UserProfile, SmartNotification, VoiceName, Certificate, LearningSession, UserPreferences, TargetLanguage } from '../types';
 import { X, LogOut, Sun, Moon, Book, Trophy, Loader2, Save, Globe, Download, ShieldCheck, Upload, CreditCard, Plus, AlertTriangle, MessageCircle, Phone, Brain, ArrowRight, Award, ChevronRight, User, Bell, Check, Trash2, Info, CheckCircle, XCircle, BarChart3, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useCertificates } from '../hooks/queries/useCertificates';
@@ -17,6 +17,7 @@ import { CREDIT_COSTS } from '../services/creditService';
 import { useTranslation } from '../contexts/LanguageContext';
 import { useAppStore } from '../store/useAppStore';
 import { supabase } from '../lib/supabase';
+import { storageService } from '../services/storageService';
 import MarkdownRenderer from './MarkdownRenderer';
 
 interface Props {
@@ -182,10 +183,14 @@ const SmartDashboard: React.FC<Props> = ({
       toast.success(`${t('common.language')}: ${next === 'fr' ? 'Français' : 'Malagasy'}`);
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
       if (!user) return;
-      // TODO: Implement export using React Query or keep a utility function
-      toast.success(t('dashboard.data_exported'));
+      const success = await storageService.exportData(user);
+      if (success) {
+          toast.success(t('dashboard.data_exported'));
+      } else {
+          toast.error(t('common.error'));
+      }
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -194,10 +199,19 @@ const SmartDashboard: React.FC<Props> = ({
       if (!file) return;
       
       setIsImporting(true);
-      // TODO: Implement import using React Query or keep a utility function
-      setIsImporting(false);
-      
-      toast.error(t('dashboard.invalid_file'));
+      try {
+          const result = await storageService.importData(file, user.id);
+          if (result.success) {
+              toast.success(t('dashboard.data_imported'));
+              setTimeout(() => window.location.reload(), 1500);
+          } else {
+              toast.error(result.message || t('dashboard.invalid_file'));
+          }
+      } catch (error) {
+          toast.error(t('common.error'));
+      } finally {
+          setIsImporting(false);
+      }
   };
 
   const handleDeleteSession = async () => {
@@ -207,7 +221,8 @@ const SmartDashboard: React.FC<Props> = ({
         await deleteSession(sessionToDelete.id);
         toast.success(t('dashboard.delete_success') || 'Session supprimée');
         setSessionToDelete(null);
-    } catch {
+    } catch (error) {
+        console.error("Delete session error:", error);
         toast.error(t('common.error') || 'Erreur lors de la suppression');
     } finally {
         setIsDeletingSession(false);

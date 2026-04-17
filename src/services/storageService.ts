@@ -1,6 +1,5 @@
 import { supabase, isSupabaseConfigured } from "../lib/supabase";
 import { UserProfile, UserPreferences, LearningSession, AdminRequest, SystemSettings, CouponCode, ExamResult, Certificate, SmartNotification, UserWeakness } from "../types";
-import { toast } from "../components/Toaster";
 import { syncService } from "./syncService";
 
 const LOCAL_STORAGE_KEY = 'teachermada_user_data';
@@ -16,15 +15,8 @@ export type SyncStatus = 'synced' | 'syncing' | 'offline' | 'error';
 type SyncStatusListener = (status: SyncStatus) => void;
 const syncListeners: SyncStatusListener[] = [];
 
-let currentSyncStatus: SyncStatus = 'synced';
-
 const notifyListeners = (user: UserProfile) => {
     userListeners.forEach(listener => listener(user));
-};
-
-const notifySyncListeners = (status: SyncStatus) => {
-    currentSyncStatus = status;
-    syncListeners.forEach(listener => listener(status));
 };
 
 // Helper to map Supabase DB shape to UserProfile
@@ -1054,25 +1046,120 @@ export const storageService = {
   },
 
   exportData: async (user: UserProfile) => {
-      const blob = new Blob([JSON.stringify(user, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `teachermada_${user.username}_backup.json`;
-      a.click();
+      try {
+          const userId = user.id;
+          
+          // Récupérer toutes les données liées
+          const [exams, certs, sessions, notifs] = await Promise.all([
+              storageService.getExamResults(userId),
+              storageService.getCertificates(userId),
+              supabase.from('learning_sessions').select('*').eq('user_id', userId),
+              storageService.getNotifications(userId)
+          ]);
+
+          const backupData = {
+              version: '3.0',
+              exportDate: new Date().toISOString(),
+              profile: user,
+              exams: exams,
+              certificates: certs,
+              sessions: sessions.data || [],
+              notifications: notifs
+          };
+
+          const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; 
+          a.download = `teachermada_backup_${user.username}_${new Date().toISOString().split('T')[0]}.json`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          return true;
+      } catch (error) {
+          console.error("Export error:", error);
+          return false;
+      }
   },
   
-  importData: async (file: File, currentUserId: string): Promise<boolean> => { 
+  importData: async (file: File, currentUserId: string): Promise<{success: boolean, message?: string}> => { 
       try {
           const text = await file.text();
-          const data = JSON.parse(text);
-          if (data.username) {
-              const updated = {
-                  username: data.username, preferences: data.preferences
-              };
-              const { error } = await supabase.from('profiles').update(updated).eq('id', currentUserId);
-              return !error;
+          const backup = JSON.parse(text);
+          
+          if (!backup.profile || !backup.version) {
+              return { success: false, message: "Format de fichier invalide." };
           }
-      } catch {}
-      return false; 
+
+          // 1. Restaurer le Profil (Username & Preferences uniquement pour sécurité)
+          const profileUpdates = {
+              username: backup.profile.username,
+              preferences: backup.profile.preferences,
+              updated_at: new Date().toISOString()
+          };
+          await supabase.from('profiles').update(profileUpdates).eq('id', currentUserId);
+
+          // 2. Restaurer les Examens
+          if (Array.isArray(backup.exams)) {
+              for (const exam of backup.exams) {
+                  const examPayload = {
+                      id: exam.id,
+                      user_id: currentUserId,
+                      language: exam.language,
+                      level: exam.level,
+                      score: exam.score,
+                      total_questions: exam.totalQuestions,
+                      passed: exam.passed,
+                      details: exam.details,
+                      created_at: new Date(exam.date).toISOString()
+                  };
+                  await supabase.from('exam_results').upsert(examPayload, { onConflict: 'id' });
+              }
+          }
+
+          // 3. Restaurer les Certificats
+          if (Array.isArray(backup.certificates)) {
+              for (const cert of backup.certificates) {
+                  const certPayload = {
+                      id: cert.id,
+                      user_id: currentUserId,
+                      user_name: cert.userName,
+                      user_full_name: cert.userFullName,
+                      language: cert.language,
+                      level: cert.level,
+                      exam_id: cert.examId,
+                      issue_date: new Date(cert.issueDate).toISOString(),
+                      validation_hash: cert.validationHash,
+                      qr_code_data: cert.qrCodeData,
+                      score: cert.score,
+                      global_score: cert.globalScore,
+                      skill_scores: cert.skillScores
+                  };
+                  await supabase.from('certificates').upsert(certPayload, { onConflict: 'id' });
+              }
+          }
+
+          // 4. Restaurer les Sessions
+          if (Array.isArray(backup.sessions)) {
+              for (const session of backup.sessions) {
+                  const sessionPayload = {
+                      id: session.id,
+                      user_id: currentUserId,
+                      type: session.type,
+                      language: session.language,
+                      level: session.level,
+                      messages: session.messages,
+                      updated_at: new Date(session.updated_at || Date.now()).toISOString()
+                  };
+                  await supabase.from('learning_sessions').upsert(sessionPayload, { onConflict: 'id' });
+              }
+          }
+
+          return { success: true };
+      } catch (error) {
+          console.error("Import error:", error);
+          return { success: false, message: "Erreur lors de l'importation des données." };
+      }
   }
 };
