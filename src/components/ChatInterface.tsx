@@ -239,7 +239,7 @@ const ChatInterface: React.FC<Props> = ({
       return getFlagUrl(lang.split(' ')[0]);
   }, [user, currentSession]);
 
-  const isLowCredits = user ? user.credits < 5 : false;
+  const isLowCredits = user ? user.credits < 1 : false;
 
   const handleStartCourse = () => {
       if (!user) return;

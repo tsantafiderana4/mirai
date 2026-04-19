@@ -281,10 +281,25 @@ const AppContent: React.FC = () => {
 
   const startExercise = async () => {
       if (!user || !currentSession) return;
+      
+      if (user.credits < 5) {
+          toast.error("Crédits insuffisants (minimum 5 crédits requis pour un exercice).");
+          setShowPayment(true);
+          return;
+      }
+
       setIsGeneratingExercise(true);
       try {
           const exercises = await generateExerciseFromHistory(currentSession.messages, user);
           if (exercises.length > 0) {
+              const { data: newCredits, error } = await supabase.rpc('consume_credits', { p_amount: 5, p_user_id: user.id });
+              if (error) {
+                  console.error("Failed to consume credits", error);
+              } else if (newCredits !== null) {
+                  setUser({ ...user, credits: newCredits });
+                  toast.info("-5 Crédits pour la génération d'exercices.");
+              }
+              
               setCurrentExercises(exercises);
               setActiveMode('exercise');
           } else {
