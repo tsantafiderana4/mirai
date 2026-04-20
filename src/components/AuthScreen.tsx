@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/queries/useAuth';
 import { ArrowRight, Sun, Mail, Lock, User, ArrowLeft, Phone, X, Send, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import LegalModal from './LegalModals';
 import { useTranslation } from '../contexts/LanguageContext';
+import { toast } from './Toaster';
 
 interface AuthScreenProps {
   onAuthSuccess: (user: UserProfile) => void;
@@ -55,6 +56,11 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, toggleTh
         let user;
         if (isRegisteringMode) {
             user = await register({ id: username, pass: password, email, phoneNumber });
+            // Display a success message
+            toast.success("⚠️ Important : Sauvegardez bien votre identifiant de connexion !");
+            
+            // Artificial delay to let the user read it before transition
+            await new Promise(resolve => setTimeout(resolve, 2500));
         } else {
             user = await login({ id: username, pass: password });
         }
@@ -189,6 +195,12 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthSuccess, onBack, toggleTh
                 <div className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-indigo-500 transition-colors"><User className="w-full h-full" /></div>
                 <input type="text" required value={username} onChange={(e) => setUsername(e.target.value)} placeholder={t('auth.username_placeholder')} className="w-full bg-slate-50 dark:bg-slate-800/50 text-slate-800 dark:text-white rounded-2xl pl-12 pr-4 py-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:focus:border-indigo-400 transition-all border border-slate-200 dark:border-slate-700 font-medium placeholder:text-slate-400 text-sm" />
             </div>
+            {isRegisteringMode && (
+                <p className="mt-2 ml-2 text-xs font-bold text-amber-600 dark:text-amber-400 flex items-start gap-1.5">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>Sauvegardez ou mémorisez votre <strong>identifiant de connexion</strong> pour pouvoir accéder à votre compte.</span>
+                </p>
+            )}
           </div>
 
           {isRegisteringMode && (

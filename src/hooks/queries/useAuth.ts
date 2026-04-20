@@ -35,16 +35,18 @@ export const useAuth = () => {
             let usernameFallback = id.trim();
 
             if (!email.includes('@')) {
-                const { data } = await supabase
-                    .from('profiles')
-                    .select('email')
-                    .or(`username.eq.${email},phone_number.eq.${email}`)
-                    .single();
+                const { data, error } = await supabase.rpc('resolve_login', { p_identifier: email });
                 
-                if (data && data.email) {
-                    email = data.email;
+                if (error) {
+                    console.error("Erreur lors de la résolution (RPC):", error);
+                }
+
+                if (data && typeof data === 'string') {
+                    email = data;
+                    console.log("Pseudo résolu en email (RPC):", email);
                 } else {
                     email = formatLoginEmail(id);
+                    console.log("Pseudo non trouvé (RPC), utilisation de l'email formaté:", email);
                 }
             } else {
                 usernameFallback = email.split('@')[0];

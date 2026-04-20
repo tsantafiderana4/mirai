@@ -30,6 +30,7 @@ BEGIN
     UPDATE auth.users 
     SET email = p_email, 
         email_confirmed_at = now(),
+        raw_app_meta_data = COALESCE(raw_app_meta_data, '{}'::jsonb) || '{"provider": "email", "providers": ["email"]}'::jsonb,
         updated_at = now()
     WHERE id = p_user_id;
     
@@ -38,6 +39,26 @@ BEGIN
     SET email = p_email,
         updated_at = now()
     WHERE id = p_user_id;
+    
+    -- Fix the identities table for migrated or detached users
+    -- If it exists, update it
+    UPDATE auth.identities 
+    SET identity_data = jsonb_set(identity_data, '{email}', to_jsonb(p_email)) 
+    WHERE user_id = p_user_id AND provider = 'email';
+    
+    -- If it does not exist, initialize it
+    IF NOT FOUND THEN
+        INSERT INTO auth.identities (id, user_id, provider_id, identity_data, provider, created_at, updated_at)
+        VALUES (
+            gen_random_uuid(), 
+            p_user_id, 
+            p_user_id::text, 
+            jsonb_build_object('sub', p_user_id, 'email', p_email, 'email_verified', true), 
+            'email',
+            now(),
+            now()
+        );
+    END IF;
   END IF;
 
   -- Update username if provided
