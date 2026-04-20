@@ -132,11 +132,12 @@ export const useAdmin = () => {
     });
 
     const updateUserAuth = useMutation({
-        mutationFn: async ({ userId, email, password }: { userId: string, email?: string, password?: string }) => {
+        mutationFn: async ({ userId, email, password, username }: { userId: string, email?: string, password?: string, username?: string }) => {
             const { error } = await supabase.rpc('admin_update_user_auth', {
                 p_user_id: userId,
                 p_email: email || null,
-                p_password: password || null
+                p_password: password || null,
+                p_username: username || null
             });
             if (error) throw error;
         },

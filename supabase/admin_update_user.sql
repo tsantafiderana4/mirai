@@ -2,10 +2,14 @@
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+DROP FUNCTION IF EXISTS public.admin_update_user_auth(UUID, TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.admin_update_user_auth(UUID, TEXT, TEXT, TEXT);
+
 CREATE OR REPLACE FUNCTION admin_update_user_auth(
   p_user_id UUID,
   p_email TEXT DEFAULT NULL,
-  p_password TEXT DEFAULT NULL
+  p_password TEXT DEFAULT NULL,
+  p_username TEXT DEFAULT NULL
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -26,6 +30,20 @@ BEGIN
     UPDATE auth.users 
     SET email = p_email, 
         email_confirmed_at = now(),
+        updated_at = now()
+    WHERE id = p_user_id;
+    
+    -- Sync email to public.profiles
+    UPDATE public.profiles
+    SET email = p_email,
+        updated_at = now()
+    WHERE id = p_user_id;
+  END IF;
+
+  -- Update username if provided
+  IF p_username IS NOT NULL AND p_username <> '' THEN
+    UPDATE public.profiles
+    SET username = p_username,
         updated_at = now()
     WHERE id = p_user_id;
   END IF;

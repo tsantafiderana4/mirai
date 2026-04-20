@@ -55,6 +55,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
   const [editingUser, setEditingUser] = useState<string | null>(null);
   const [editEmail, setEditEmail] = useState('');
   const [editPassword, setEditPassword] = useState('');
+  const [editUsername, setEditUsername] = useState('');
 
   // State for user deletion
   const [deletingUser, setDeletingUser] = useState<UserProfile | null>(null);
@@ -66,11 +67,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
 
   const handleSaveUserAuth = async (userId: string) => {
       try {
-          await updateUserAuth({ userId, email: editEmail, password: editPassword });
+          await updateUserAuth({ userId, email: editEmail, password: editPassword, username: editUsername });
           notify("Informations de l'utilisateur mises à jour.", 'success');
           setEditingUser(null);
           setEditEmail('');
           setEditPassword('');
+          setEditUsername('');
       } catch (_e) {
           console.error(_e);
           notify("Erreur lors de la mise à jour des informations.", 'error');
@@ -310,9 +312,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                                     
                                     <div className="flex items-center gap-2">
                                         <button onClick={() => {
-                                            setEditingUser(editingUser === user.id ? null : user.id);
-                                            setEditEmail(user.email || '');
-                                            setEditPassword('');
+                                            if (editingUser === user.id) {
+                                                setEditingUser(null);
+                                            } else {
+                                                setEditingUser(user.id);
+                                                setEditEmail(user.email || '');
+                                                setEditUsername(user.username || '');
+                                                setEditPassword('');
+                                            }
                                         }} className="p-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors shadow-sm">
                                             <Settings className="w-5 h-5"/>
                                         </button>
@@ -329,8 +336,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
                             {/* Edit User Auth Section */}
                             {editingUser === user.id && (
                                 <div className="mt-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
-                                    <h4 className="text-sm font-bold mb-3">Modifier les informations de connexion</h4>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <h4 className="text-sm font-bold mb-3">Modifier les informations de l'utilisateur</h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">Nom d'utilisateur</label>
+                                            <input type="text" value={editUsername} onChange={(e) => setEditUsername(e.target.value)} placeholder="Nouveau nom" className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 outline-none focus:ring-2 focus:ring-indigo-500" />
+                                        </div>
                                         <div>
                                             <label className="block text-xs font-bold text-slate-500 mb-1">Email</label>
                                             <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="Nouvel email" className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 outline-none focus:ring-2 focus:ring-indigo-500" />
