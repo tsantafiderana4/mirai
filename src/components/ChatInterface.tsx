@@ -65,7 +65,7 @@ const ChatInterface: React.FC<Props> = ({
   const activeSession = currentSession || learningSession || null;
   const { notifications } = useNotifications(user?.id || '');
   const unreadCount = notifications?.filter(n => !n.read).length || 0;
-  const { t } = useTranslation();
+  const { t, language, setLanguage } = useTranslation();
 
   const { messages, setMessages, isStreaming, processMessage } = useChat(user, activeSession, updateSession, notify, onShowPayment);
 
@@ -297,6 +297,18 @@ const ChatInterface: React.FC<Props> = ({
                     </button>
                     {showTopMenu && (
                         <div className="absolute top-full left-0 mt-2 w-48 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-100 dark:border-slate-700 overflow-hidden z-50 animate-fade-in-up">
+                            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-700">
+                                <div className="flex items-center justify-center w-full gap-1 p-0.5 bg-slate-100 dark:bg-slate-900/50 rounded-lg">
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); setLanguage('fr'); }}
+                                        className={`flex-1 py-1.5 text-[10px] uppercase font-black tracking-wider rounded-md transition-all ${language === 'fr' ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                                    >🇫🇷 FR</button>
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); setLanguage('mg'); }}
+                                        className={`flex-1 py-1.5 text-[10px] uppercase font-black tracking-wider rounded-md transition-all ${language === 'mg' ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                                    >🇲🇬 MG</button>
+                                </div>
+                            </div>
                             <button onClick={onStartPractice} className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200"><MessageCircle className="w-4 h-4 text-indigo-500" /> {t('dashboard.start_dialogue')}</button>
                             <button onClick={onStartExercise} className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200"><Brain className="w-4 h-4 text-emerald-500" /> {t('dashboard.start_exercise')}</button>
                             <button onClick={onStartExam} className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200"><Trophy className="w-4 h-4 text-rose-500" /> {t('dashboard.start_exam')}</button>

@@ -1,7 +1,7 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { UserProfile, SmartNotification, VoiceName, Certificate, LearningSession, UserPreferences, TargetLanguage } from '../types';
-import { X, LogOut, Sun, Moon, Book, Trophy, Loader2, Save, Globe, Download, ShieldCheck, Upload, CreditCard, Plus, AlertTriangle, MessageCircle, Phone, Brain, ArrowRight, Award, ChevronRight, User, Bell, Check, Trash2, Info, CheckCircle, XCircle, BarChart3, Lock } from 'lucide-react';
+import { X, LogOut, Sun, Moon, Book, Trophy, Loader2, Save, Globe, Download, ShieldCheck, Upload, CreditCard, Plus, AlertTriangle, MessageCircle, Phone, Brain, ArrowRight, Award, ChevronRight, User, Bell, Check, Trash2, Info, CheckCircle, XCircle, BarChart3, Lock, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useCertificates } from '../hooks/queries/useCertificates';
 import { useExamResults } from '../hooks/queries/useExamResults';
@@ -56,6 +56,8 @@ const SmartDashboard: React.FC<Props> = ({
   const [sessionToDelete, setSessionToDelete] = useState<LearningSession | null>(null);
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [isDeletingSession, setIsDeletingSession] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter(n => !n.read).length;
   const [selectedResult, setSelectedResult] = useState<ExamResultDetailed | null>(null);
@@ -240,6 +242,50 @@ const SmartDashboard: React.FC<Props> = ({
     } finally {
         setIsDeletingSession(false);
     }
+  };
+
+  const handleDownloadFullLesson = async () => {
+        if (!exportRef.current || !selectedSessionHistory) return;
+        try {
+            setIsExportingPdf(true);
+            
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            const { toJpeg } = await import('html-to-image');
+            const dataUrl = await toJpeg(exportRef.current, { 
+                cacheBust: true,
+                pixelRatio: 1.5,
+                quality: 0.85,
+                backgroundColor: '#ffffff'
+            });
+
+            const { jsPDF } = await import('jspdf');
+            
+            const img = new Image();
+            img.src = dataUrl;
+            await new Promise(resolve => { img.onload = resolve; });
+            
+            const pdfWidth = 210; 
+            const pdfHeight = (img.height * pdfWidth) / img.width; 
+            
+            const doc = new jsPDF({
+                orientation: 'portrait',
+                unit: 'mm',
+                format: [pdfWidth, pdfHeight]
+            });
+            
+            doc.addImage(dataUrl, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+
+            const targetLang = selectedSessionHistory.language || user?.preferences?.targetLanguage || 'fr';
+            const cleanLang = targetLang.split(' ')[0].toLowerCase();
+            
+            doc.save(`lecon_complet_${cleanLang}_teachermada.pdf`);
+        } catch (error) {
+            console.error("Export error :", error);
+            toast.error(t('common.error') || "Erreur d'exportation");
+        } finally {
+            setIsExportingPdf(false);
+        }
   };
 
   const handleMarkRead = async (id: string, e?: React.MouseEvent) => {
@@ -1019,9 +1065,20 @@ const SmartDashboard: React.FC<Props> = ({
                         </>
                     ) : (
                         <div className="animate-slide-in-right flex flex-col h-full">
-                            <button onClick={() => setSelectedSessionHistory(null)} className="text-xs font-bold text-slate-400 hover:text-indigo-500 flex items-center gap-1 mb-4">
-                                <ChevronRight className="w-3 h-3 rotate-180"/> Retour à l'historique
-                            </button>
+                            <div className="flex justify-between items-center mb-4">
+                                <button onClick={() => setSelectedSessionHistory(null)} className="text-xs font-bold text-slate-400 hover:text-indigo-500 flex items-center gap-1">
+                                    <ChevronRight className="w-3 h-3 rotate-180"/> Retour à l'historique
+                                </button>
+                                
+                                <button
+                                    onClick={handleDownloadFullLesson}
+                                    disabled={isExportingPdf}
+                                    className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-2 transition-all ${isExportingPdf ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-500' : 'bg-slate-100 hover:bg-indigo-50 dark:bg-slate-800 text-slate-600 hover:text-indigo-600 dark:text-slate-300 dark:hover:bg-slate-700'}`}
+                                >
+                                    {isExportingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><Download className="w-3.5 h-3.5" /><FileText className="w-3.5 h-3.5" /></>}
+                                    {isExportingPdf ? (language === 'mg' ? 'Makà PDF...' : 'Génération PDF...') : 'Télécharger PDF'}
+                                </button>
+                            </div>
                             
                             <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-700 mb-4 shrink-0">
                                 <div className="flex justify-between items-center mb-2">
@@ -1066,6 +1123,37 @@ const SmartDashboard: React.FC<Props> = ({
                                         </div>
                                     );
                                 })}
+                            </div>
+
+                            {/* Hidden Elegant Export Wrapper for Full Session */}
+                            <div style={{ position: 'absolute', left: '-9999px', top: '-9999px', pointerEvents: 'none', opacity: 0, zIndex: -50 }}>
+                                <div ref={exportRef} className="w-[800px] bg-white text-slate-800 p-12 shadow-sm font-sans">
+                                    <div className="flex items-center gap-5 border-b-2 border-slate-100 pb-8 mb-8">
+                                        <div className="w-20 h-20 bg-slate-50 border-2 border-slate-100 rounded-2xl flex items-center justify-center p-2">
+                                            <img src="https://i.ibb.co/B2XmRwmJ/logo.png" className="w-full h-full object-contain" alt="Logo" />
+                                        </div>
+                                        <div>
+                                            <h1 className="text-3xl font-black text-indigo-600 tracking-tight leading-none mb-2">TeacherMada</h1>
+                                            <p className="text-slate-500 font-bold text-lg">{(selectedSessionHistory?.type === 'lesson' || selectedSessionHistory?.type === 'dialogue') ? (language === 'mg' ? "Lesona" : "Leçon") : "Session"} - {selectedSessionHistory ? new Date(selectedSessionHistory.updatedAt).toLocaleDateString(language === 'mg' ? 'fr-FR' : 'fr-FR') : ''}</p>
+                                        </div>
+                                    </div>
+                                    <div className="prose prose-slate prose-lg max-w-none prose-headings:text-indigo-900 prose-a:text-indigo-600 prose-strong:text-slate-900">
+                                        {selectedSessionHistory?.messages.map(msg => {
+                                            const isSystemLike = msg.role === 'model' && (msg.text.startsWith('✅') || msg.text.startsWith('❌') || msg.text.startsWith('🏆'));
+                                            if (isSystemLike) return null;
+                                            return (
+                                                <div key={msg.id} className="mb-6">
+                                                    <strong className="text-indigo-600 block mb-1">{msg.role === 'user' ? (user?.username || 'Vous') : 'TeacherMada'}</strong>
+                                                    <MarkdownRenderer content={msg.text.replace(/\[Leçon\s+\d+\]/g, '')} onPlayAudio={() => {}} />
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="mt-16 pt-8 border-t-2 border-slate-100 flex justify-between items-center text-slate-400 font-bold text-sm uppercase tracking-widest">
+                                        <span>© TeacherMada</span>
+                                        <span>{window.location.hostname}</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     )}
