@@ -6,6 +6,11 @@ import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
 import { LanguageProvider } from './contexts/LanguageContext';
 
+// Désactiver les console logs par défaut dans l'application
+console.log = () => {};
+console.info = () => {};
+console.debug = () => {};
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

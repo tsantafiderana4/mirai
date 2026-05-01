@@ -79,44 +79,61 @@
       
       /* Elegant Scrollbar for non-touch screens */
       @media (hover: hover) and (pointer: fine) {
-        ::-webkit-scrollbar {
-          width: 8px;
-          height: 8px;
+        ::-webkit-scrollbar,
+        .no-scrollbar::-webkit-scrollbar,
+        .scrollbar-hide::-webkit-scrollbar {
+          width: 8px !important;
+          height: 8px !important;
+          display: block !important;
         }
-        ::-webkit-scrollbar-track {
-          background: transparent;
+        .no-scrollbar, .scrollbar-hide {
+          -ms-overflow-style: auto !important;
+          scrollbar-width: thin !important;
         }
-        ::-webkit-scrollbar-thumb {
-          background: rgba(156, 163, 175, 0.4);
-          border-radius: 10px;
-          border: 2px solid transparent;
-          background-clip: padding-box;
+        ::-webkit-scrollbar-track,
+        .no-scrollbar::-webkit-scrollbar-track,
+        .scrollbar-hide::-webkit-scrollbar-track {
+          background: transparent !important;
         }
-        ::-webkit-scrollbar-thumb:hover {
-          background: rgba(107, 114, 128, 0.6);
-          border: 2px solid transparent;
-          background-clip: padding-box;
+        ::-webkit-scrollbar-thumb,
+        .no-scrollbar::-webkit-scrollbar-thumb,
+        .scrollbar-hide::-webkit-scrollbar-thumb {
+          background: rgba(156, 163, 175, 0.4) !important;
+          border-radius: 10px !important;
+          border: 2px solid transparent !important;
+          background-clip: padding-box !important;
         }
-        .dark ::-webkit-scrollbar-thumb {
-          background: rgba(100, 116, 139, 0.4);
-          border: 2px solid transparent;
-          background-clip: padding-box;
+        ::-webkit-scrollbar-thumb:hover,
+        .no-scrollbar::-webkit-scrollbar-thumb:hover,
+        .scrollbar-hide::-webkit-scrollbar-thumb:hover {
+          background: rgba(107, 114, 128, 0.6) !important;
+          border: 2px solid transparent !important;
+          background-clip: padding-box !important;
         }
-        .dark ::-webkit-scrollbar-thumb:hover {
-          background: rgba(148, 163, 184, 0.6);
-          border: 2px solid transparent;
-          background-clip: padding-box;
+        .dark ::-webkit-scrollbar-thumb,
+        .dark .no-scrollbar::-webkit-scrollbar-thumb,
+        .dark .scrollbar-hide::-webkit-scrollbar-thumb {
+          background: rgba(100, 116, 139, 0.4) !important;
+          border: 2px solid transparent !important;
+          background-clip: padding-box !important;
+        }
+        .dark ::-webkit-scrollbar-thumb:hover,
+        .dark .no-scrollbar::-webkit-scrollbar-thumb:hover,
+        .dark .scrollbar-hide::-webkit-scrollbar-thumb:hover {
+          background: rgba(148, 163, 184, 0.6) !important;
+          border: 2px solid transparent !important;
+          background-clip: padding-box !important;
         }
         
         /* Thin variant for smaller scroll areas if needed */
         .scrollbar-thin::-webkit-scrollbar {
-          width: 4px;
-          height: 4px;
+          width: 4px !important;
+          height: 4px !important;
         }
         .scrollbar-thin::-webkit-scrollbar-thumb {
-          border: none;
-          border-radius: 4px;
-          background: rgba(156, 163, 175, 0.3);
+          border: none !important;
+          border-radius: 4px !important;
+          background: rgba(156, 163, 175, 0.3) !important;
         }
       }
     </style>

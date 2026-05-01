@@ -382,16 +382,7 @@ const ChatInterface: React.FC<Props> = ({
       </header>
 
       {/* --- CHAT AREA --- */}
-      <main className="flex-1 overflow-y-auto px-4 md:px-6 py-6 space-y-6 scrollbar-hide relative no-scrollbar">
-        <style>{`
-            .no-scrollbar::-webkit-scrollbar {
-                display: none;
-            }
-            .no-scrollbar {
-                -ms-overflow-style: none;
-                scrollbar-width: none;
-            }
-        `}</style>
+      <main className="flex-1 overflow-y-auto px-4 md:px-6 py-6 space-y-6 relative">
         <div className="max-w-3xl mx-auto space-y-6">
             <div className="w-full mb-6 animate-fade-in">
                 <div className="bg-white/90 dark:bg-slate-800/90 backdrop-blur-md rounded-[2rem] border border-slate-200 dark:border-slate-700 p-6 shadow-xl shadow-slate-200/50 dark:shadow-none">
