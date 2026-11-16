@@ -38,7 +38,7 @@ AS $$
 $$;
 
 REVOKE ALL ON FUNCTION public.is_admin() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.is_admin() TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated, service_role;
 
 -- ---------------------------------------------------------------------
 -- 1. Colonnes privilégiées de `profiles` : seuls les admins (ou le code
@@ -90,6 +90,7 @@ DROP TRIGGER IF EXISTS protect_profile_privileged_columns ON public.profiles;
 CREATE TRIGGER protect_profile_privileged_columns
 BEFORE INSERT OR UPDATE ON public.profiles
 FOR EACH ROW EXECUTE FUNCTION public.protect_profile_privileged_columns();
+REVOKE ALL ON FUNCTION public.protect_profile_privileged_columns() FROM PUBLIC, anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- 2. Policies `profiles` : admin via is_admin(), plus via user_metadata

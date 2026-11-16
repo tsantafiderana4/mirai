@@ -262,6 +262,10 @@ DROP POLICY IF EXISTS "notifications_admin_insert" ON public.notifications;
 CREATE POLICY "notifications_admin_insert" ON public.notifications FOR INSERT TO authenticated
   WITH CHECK (public.is_admin());
 
+DROP POLICY IF EXISTS "coupons_admin_all" ON public.coupons;
+CREATE POLICY "coupons_admin_all" ON public.coupons FOR ALL TO authenticated
+  USING (public.is_admin()) WITH CHECK (public.is_admin());
+
 DROP POLICY IF EXISTS "settings_public_read" ON public.system_settings;
 CREATE POLICY "settings_public_read" ON public.system_settings FOR SELECT
   USING (true);
@@ -313,6 +317,13 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.admin_update_user_auth(uuid, text, text, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.admin_update_user_auth(uuid, text, text, text) TO authenticated;
+
+-- Fonctions de trigger : jamais appelables directement via l'API
+REVOKE ALL ON FUNCTION public.handle_new_user() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.set_updated_at() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.cleanup_old_notifications() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.is_admin() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated, service_role;
 
 -- Admin : supprimer un compte (cascade sur le profil et ses données)
 CREATE OR REPLACE FUNCTION public.admin_delete_user(p_user_id uuid)
