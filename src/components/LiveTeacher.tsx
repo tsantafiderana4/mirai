@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Mic, MicOff, Phone, Wifi, Loader2, AlertCircle, Activity, Volume2, Clock, Globe } from 'lucide-react';
 import { UserProfile } from '../types';
 import { Modality, GoogleGenAI } from '@google/genai';
-import { chargeVoiceMinute, getGeminiApiKey } from '../services/geminiService';
+import { chargeVoiceMinute, getLiveToken } from '../services/geminiService';
 import { useUserProfile } from '../hooks/queries/useUserProfile';
 import { useLearningSession } from '../hooks/queries/useLearningSession';
 
@@ -242,7 +242,6 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
   const connectToProxy = async (ctx: AudioContext) => {
       if (!user) return;
       
-      let currentApiKey = "";
       try {
           // --- PROMPT SYSTÈME STRICT : IMMERSION & CORRECTION ---
           const sysPrompt = `
@@ -271,13 +270,10 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
           START: Introduce yourself briefly in ${user.preferences?.targetLanguage}, asking how they are today.
           `;
 
-          const apiKey = await getGeminiApiKey();
-          currentApiKey = apiKey;
-          if (!apiKey) {
-              throw new Error("Clé API Gemini non configurée.");
-          }
-
-          const ai = new GoogleGenAI({ apiKey });
+          // Jeton éphémère (1 session) délivré par le serveur : la clé
+          // Gemini ne transite jamais par le navigateur.
+          const liveToken = await getLiveToken();
+          const ai = new GoogleGenAI({ apiKey: liveToken, httpOptions: { apiVersion: 'v1alpha' } });
 
           const sessionPromise = ai.live.connect({
               model: LIVE_MODEL,
@@ -362,9 +358,6 @@ const LiveTeacher: React.FC<LiveTeacherProps> = ({ user, onClose, onUpdateUser, 
                   },
                   onerror: (err) => {
                       console.error("Session error", err);
-                      if (currentApiKey) {
-                          import('../services/geminiService').then(m => m.reportFailedApiKey(currentApiKey));
-                      }
                       cleanupAudio();
                       if (isMountedRef.current) {
                           setStatus('error');

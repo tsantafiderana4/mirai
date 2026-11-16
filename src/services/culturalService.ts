@@ -1,6 +1,6 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { Type } from "@google/genai";
 import { CulturalIntro } from "../types";
-import { getGeminiApiKey } from "./geminiService";
+import { callAI } from "./aiClient";
 
 // Use the same model as geminiService
 const TEXT_MODEL = 'gemini-3-flash-preview';
@@ -10,9 +10,6 @@ export async function generateCulturalIntro(
   level: string,
   explanationLanguage: string
 ): Promise<CulturalIntro> {
-  const apiKey = await getGeminiApiKey();
-  const ai = new GoogleGenAI({ apiKey });
-
   const prompt = `
     Génère une introduction culturelle et d'immersion pour un apprenant de la langue "${targetLanguage}" au niveau "${level}".
     La langue d'explication doit être "${explanationLanguage}".
@@ -21,11 +18,10 @@ export async function generateCulturalIntro(
     Sois précis, encourageant et utilise des exemples concrets.
   `;
 
-  const response = await ai.models.generateContent({
+  const { json } = await callAI<{ json: Omit<CulturalIntro, 'language' | 'level'> }>('generate_json', {
     model: TEXT_MODEL,
     contents: prompt,
     config: {
-      responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
         properties: {
@@ -71,7 +67,7 @@ export async function generateCulturalIntro(
     }
   });
 
-  const data = JSON.parse(response.text || "{}");
+  const data = json || {};
 
   return {
     language: targetLanguage,

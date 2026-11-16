@@ -1,18 +1,13 @@
 
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => {
-  // Load env file based on `mode` in the current working directory.
-  // Set the third parameter to '' to load all env regardless of the `VITE_` prefix.
-  const env = loadEnv(mode, (process as any).cwd(), '');
-
-  // Prioritize VITE_GOOGLE_API_KEY (from Render/User) or fallback to API_KEY
-  // Support comma-separated keys for rotation
-  const apiKey = env.GEMINI_API_KEY || env.VITE_GOOGLE_API_KEY || env.API_KEY || '';
-
+// IMPORTANT : ne jamais injecter de clé API ici (via `define`) : tout ce qui
+// est injecté finit en clair dans le JavaScript envoyé aux visiteurs.
+// Les appels IA passent par l'Edge Function Supabase `gemini-api`.
+export default defineConfig(() => {
   return {
     plugins: [
       react(),
@@ -67,12 +62,6 @@ export default defineConfig(({ mode }) => {
         }
       })
     ],
-    define: {
-      // Stringify the API key to inject it into the client code
-      'process.env.API_KEY': JSON.stringify(apiKey),
-      'process.env.GEMINI_API_KEY': JSON.stringify(apiKey),
-      'import.meta.env.VITE_GEMINI_API_KEY': JSON.stringify(apiKey),
-    },
     build: {
       outDir: 'dist',
       chunkSizeWarningLimit: 1000,

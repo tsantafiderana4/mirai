@@ -1,145 +1,15 @@
 import { UserProfile, ChatMessage, ExerciseItem } from "../types";
 import { SYSTEM_PROMPT_TEMPLATE, SUPPORT_AGENT_PROMPT } from "../constants";
-import { supabase } from "../lib/supabase";
 import { useAppStore } from '../store/useAppStore';
-import { GoogleGenAI, Modality, Type } from "@google/genai";
+import { Type } from "@google/genai";
 import { CREDIT_COSTS, deductCredits } from "./creditService";
+import { callAI, streamAI, base64ToArrayBuffer, AIError } from "./aiClient";
 
-// Cache the API keys to avoid querying DB on every request
-let cachedApiKeys: { value: string, failures: number, lastUsed: number }[] = [];
-let lastKeyFetch: number = 0;
+// Toutes les fonctions ci-dessous passent par l'Edge Function `gemini-api`
+// (voir aiClient.ts). Le serveur gère la rotation des clés et le repli
+// automatique sur d'autres modèles : le navigateur ne voit jamais de clé.
 
-export async function getGeminiApiKey(): Promise<string> {
-    // Refresh cache if empty or older than 5 minutes
-    if (cachedApiKeys.length === 0 || Date.now() - lastKeyFetch > 5 * 60 * 1000) {
-        try {
-            // 1. Try to fetch from dedicated api_keys table
-            const { data: tableKeys, error: tableError } = await supabase
-                .from('api_keys')
-                .select('key_value')
-                .eq('is_active', true)
-                .eq('provider', 'gemini');
-
-            if (!tableError && tableKeys && tableKeys.length > 0) {
-                cachedApiKeys = tableKeys.map(k => ({ 
-                    value: k.key_value, 
-                    failures: 0, 
-                    lastUsed: 0 
-                }));
-                lastKeyFetch = Date.now();
-            } else {
-                // 2. Fallback to system_settings
-                const { data, error } = await supabase.from('system_settings').select('admin_contact').single();
-                if (!error && data?.admin_contact?.apiKeys) {
-                    const keys = data.admin_contact.apiKeys;
-                    let fetchedKeys: string[] = [];
-                    
-                    if (keys.geminiKeys && Array.isArray(keys.geminiKeys) && keys.geminiKeys.length > 0) {
-                        fetchedKeys = keys.geminiKeys;
-                    } else if (keys.gemini) {
-                        fetchedKeys = [keys.gemini];
-                    }
-                    
-                    if (fetchedKeys.length > 0) {
-                        cachedApiKeys = fetchedKeys.map(k => ({ 
-                            value: k, 
-                            failures: 0, 
-                            lastUsed: 0 
-                        }));
-                        lastKeyFetch = Date.now();
-                    }
-                }
-            }
-        } catch (e) {
-            console.warn("Could not fetch API key from DB", e);
-        }
-    }
-
-    // Fallback to env if still empty
-    if (cachedApiKeys.length === 0) {
-        const envKey = process.env.GEMINI_API_KEY;
-        if (!envKey) {
-            throw new Error("Clé API Gemini non configurée.");
-        }
-        return envKey;
-    }
-
-    // Intelligent Rotation: Pick the key with the fewest failures, then the least recently used
-    // Filter out keys with too many failures (e.g., > 5)
-    const availableKeys = cachedApiKeys.filter(k => k.failures < 5);
-    const pool = availableKeys.length > 0 ? availableKeys : cachedApiKeys;
-
-    pool.sort((a, b) => {
-        if (a.failures !== b.failures) return a.failures - b.failures;
-        return a.lastUsed - b.lastUsed;
-    });
-
-    const selected = pool[0];
-    selected.lastUsed = Date.now();
-    return selected.value;
-}
-
-/**
- * Report a failed API key so it can be deprioritized in rotation
- */
-export function reportFailedApiKey(keyValue: string) {
-    const key = cachedApiKeys.find(k => k.value === keyValue);
-    if (key) {
-        key.failures++;
-        // If many failures, maybe force a refresh sooner
-        if (key.failures >= 5) {
-            lastKeyFetch = 0; 
-        }
-    }
-}
-
-const SUPPORT_QUOTA_KEY = 'tm_support_quota';
-
-const canUseSupportAgent = (): boolean => {
-    const today = new Date().toDateString();
-    const raw = localStorage.getItem(SUPPORT_QUOTA_KEY);
-    let data = raw ? JSON.parse(raw) : { date: today, count: 0 };
-    if (data.date !== today) data = { date: today, count: 0 };
-    return data.count < 100;
-};
-
-const incrementSupportUsage = () => {
-    const today = new Date().toDateString();
-    const raw = localStorage.getItem(SUPPORT_QUOTA_KEY);
-    let data = raw ? JSON.parse(raw) : { date: today, count: 0 };
-    if (data.date !== today) data = { date: today, count: 0 };
-    data.count++;
-    localStorage.setItem(SUPPORT_QUOTA_KEY, JSON.stringify(data));
-};
-
-// --- SERVICES EXPORTÉS ---
-
-// Nouvelle fonction pour facturer le LiveTeacher
-export const chargeVoiceMinute = async (): Promise<boolean> => {
-    try {
-        const { data: newCredits, error: rpcError } = await supabase.rpc('consume_credits', { 
-            p_amount: CREDIT_COSTS.VOICE_CALL_PER_MINUTE
-        });
-        if (rpcError) {
-            console.error('[Billing Error]', rpcError);
-            return false;
-        }
-        if (newCredits !== null) {
-            if (typeof newCredits === 'number') {
-                useAppStore.getState().updateUserCredits(newCredits);
-            } else if (newCredits && typeof newCredits === 'object' && 'current_balance' in newCredits) {
-                // Handle case where RPC might return an object (legacy support)
-                useAppStore.getState().updateUserCredits((newCredits as { current_balance: number }).current_balance);
-            }
-        }
-        return true;
-    } catch (e: unknown) {
-        console.error("Erreur de facturation vocale:", e);
-        return false;
-    }
-};
-
-// Modèles par défaut
+// Modèles par défaut (le serveur essaie ensuite sa propre chaîne de repli)
 export const TEXT_MODELS = [
     'gemini-3-flash-preview',
     'gemini-2.5-flash',
@@ -150,7 +20,48 @@ export const TEXT_MODELS = [
 export const TEXT_MODEL = TEXT_MODELS[0];
 export const AUDIO_MODEL = 'gemini-2.5-flash-preview-tts';
 
+const isCreditError = (e: unknown) => e instanceof AIError && e.status === 402;
+
+// --- QUOTA AGENT SUPPORT (local) ---
+const SUPPORT_QUOTA_KEY = 'tm_support_quota';
+
+const readSupportQuota = () => {
+    const today = new Date().toDateString();
+    try {
+        const raw = localStorage.getItem(SUPPORT_QUOTA_KEY);
+        const data = raw ? JSON.parse(raw) : null;
+        if (data && data.date === today) return data as { date: string; count: number };
+    } catch { /* stockage indisponible */ }
+    return { date: today, count: 0 };
+};
+
+const canUseSupportAgent = (): boolean => readSupportQuota().count < 100;
+
+const incrementSupportUsage = () => {
+    const data = readSupportQuota();
+    data.count++;
+    try { localStorage.setItem(SUPPORT_QUOTA_KEY, JSON.stringify(data)); } catch { /* ignore */ }
+};
+
 // --- SERVICES EXPORTÉS ---
+
+/** Facture une minute d'appel vocal (LiveTeacher), côté serveur. */
+export const chargeVoiceMinute = async (): Promise<boolean> => {
+    try {
+        await callAI('charge_voice_minute');
+        return true;
+    } catch (e: unknown) {
+        console.error("Erreur de facturation vocale:", e);
+        return false;
+    }
+};
+
+/** Jeton éphémère (1 session) pour l'API Live, délivré par le serveur. */
+export const getLiveToken = async (): Promise<string> => {
+    const { token } = await callAI<{ token: string }>('live_token');
+    if (!token) throw new Error("Jeton vocal indisponible.");
+    return token;
+};
 
 // 1. TUTORIAL AGENT (SUPPORT)
 export const generateSupportResponse = async (
@@ -159,7 +70,7 @@ export const generateSupportResponse = async (
     user: UserProfile,
     history: {role: string, text: string}[]
 ): Promise<string> => {
-    
+
     if (!canUseSupportAgent()) {
         return "⛔ Quota journalier d'aide atteint (100/100). Revenez demain.";
     }
@@ -167,35 +78,21 @@ export const generateSupportResponse = async (
     const systemInstruction = SUPPORT_AGENT_PROMPT(context, user);
     const prompt = `Historique de conversation:\n${history.map(h => `${h.role}: ${h.text}`).join('\n')}\n\nQuestion actuelle: ${userQuery}`;
 
-    for (const model of TEXT_MODELS) {
-        let apiKey = '';
-        try {
-            apiKey = await getGeminiApiKey();
-            const ai = new GoogleGenAI({ apiKey });
-
-            const response = await ai.models.generateContent({
-                model: model,
-                contents: prompt,
-                config: {
-                    systemInstruction: systemInstruction,
-                    maxOutputTokens: 2000, 
-                    temperature: 0.5
-                }
-            });
-            
-            incrementSupportUsage();
-            return response.text || "Je n'ai pas de réponse pour le moment.";
-        } catch (e) {
-            if (apiKey) reportFailedApiKey(apiKey);
-            console.warn(`Support error with model ${model}:`, e);
-            // Continue to next model
-        }
+    try {
+        const { text } = await callAI<{ text: string }>('generate', {
+            model: TEXT_MODEL,
+            contents: prompt,
+            config: { systemInstruction, maxOutputTokens: 2000, temperature: 0.5 }
+        });
+        incrementSupportUsage();
+        return text || "Je n'ai pas de réponse pour le moment.";
+    } catch (e) {
+        console.warn('Support error:', e);
+        return "Désolé, je rencontre un problème technique momentané. Veuillez réessayer.";
     }
-    
-    return "Désolé, je rencontre un problème technique momentané. Veuillez réessayer.";
 };
 
-// 2. MAIN CHAT (STREAMING VIA SDK)
+// 2. MAIN CHAT (STREAMING)
 export async function* sendMessageStream(
   message: string,
   user: UserProfile,
@@ -205,18 +102,14 @@ export async function* sendMessageStream(
 ) {
   if (!user.preferences) throw new Error("Profil incomplet");
 
-  // Fusionner les préférences avec les surcharges de session
   const effectivePrefs = {
       ...user.preferences,
       targetLanguage: overrides?.language || user.preferences.targetLanguage,
       level: overrides?.level || user.preferences.level
   };
 
-  // OPTIMIZATION: Limit history to last 15 messages to reduce latency and token usage
-  const recentHistory = history.slice(-15);
-
-  // Format history
-  const contextPrompt = recentHistory
+  // Limite l'historique aux 15 derniers messages (latence et coût)
+  const contextPrompt = history.slice(-15)
     .filter(msg => msg.text && msg.text.trim().length > 0)
     .map(msg => `${msg.role === 'user' ? 'Élève' : 'Professeur'}: ${msg.text}`)
     .join('\n\n');
@@ -225,143 +118,48 @@ export async function* sendMessageStream(
   const systemInstruction = SYSTEM_PROMPT_TEMPLATE(user, effectivePrefs, sessionType);
 
   let success = false;
-  let lastError: Error | null = null;
-
-  for (const model of TEXT_MODELS) {
-    let apiKey = '';
-    try {
-        console.log(`[Gemini] Attempting stream with model: ${model}`);
-        apiKey = await getGeminiApiKey();
-        const ai = new GoogleGenAI({ apiKey });
-
-        const responseStream = await ai.models.generateContentStream({
-            model: model,
-            contents: finalMessage,
-            config: {
-                systemInstruction: systemInstruction,
-                temperature: 0.7,
-                maxOutputTokens: 8192,
-            }
-        });
-
-        for await (const chunk of responseStream) {
-            if (chunk.text) {
-                yield chunk.text;
-                success = true;
-            }
-        }
-        
-        if (success) {
-            console.log(`[Gemini] Stream completed successfully with model: ${model}`);
-            // Deduct credits (1 credit for text generation)
-            const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
-            if (newCredits !== null) {
-                useAppStore.getState().updateUserCredits(newCredits);
-            }
-            return; // Exit function on success
-        }
-    } catch (e: unknown) {
-        const error = e as Error;
-        if (apiKey) reportFailedApiKey(apiKey);
-        lastError = error;
-        console.warn(`[Gemini] Stream failed with model ${model}:`, error);
-        if (success) {
-            // If we already started yielding, we can't really retry with a different model easily
-            // without confusing the UI. So we just break.
-            break;
-        }
-        if (error.message === "CREDITS_EXHAUSTED") {
-            yield "⛔ **Crédits épuisés.**\n\nVeuillez recharger votre compte pour continuer.";
-            return;
-        }
-    }
+  try {
+      for await (const chunk of streamAI({
+          model: TEXT_MODEL,
+          contents: finalMessage,
+          config: { systemInstruction, temperature: 0.7, maxOutputTokens: 8192 }
+      })) {
+          success = true;
+          yield chunk;
+      }
+  } catch (e: unknown) {
+      console.warn('[Gemini] Stream failed:', e);
+      if (isCreditError(e)) {
+          yield "⛔ **Crédits épuisés.**\n\nVeuillez recharger votre compte pour continuer.";
+          return;
+      }
   }
 
   if (!success) {
-      console.error("[Gemini] All models failed for stream.", lastError);
       yield "⚠️ Désolé, le service est temporairement indisponible. Veuillez réessayer dans un instant.";
+      return;
+  }
+
+  const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
+  if (newCredits !== null) {
+      useAppStore.getState().updateUserCredits(newCredits);
   }
 }
 
-// 3. TEXT-TO-SPEECH (TTS)
+// 3. TEXT-TO-SPEECH (TTS) — renvoie du PCM brut (24 kHz, 16 bits)
 export const generateSpeech = async (text: string, voiceName: string = 'Kore'): Promise<ArrayBuffer | null> => {
-    const AUDIO_MODELS = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts', 'gemini-2.5-flash-tts'];
-    const MAX_RETRIES = AUDIO_MODELS.length - 1;
-    
-    // Fonction pour récupérer une clé API de manière dynamique
-    const getApiKey = async (): Promise<string> => {
-        try {
-            return await getGeminiApiKey();
-        } catch {
-            return '';
-        }
-    };
-
-    let apiKey = '';
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        try {
-            const currentModel = AUDIO_MODELS[attempt];
-            console.log(`[Gemini TTS] Generating speech with model ${currentModel} (attempt ${attempt + 1})...`);
-            
-            apiKey = await getApiKey();
-            if (!apiKey) {
-                throw new Error("Aucune clé API Gemini disponible.");
-            }
-
-            const ai = new GoogleGenAI({ apiKey });
-
-            const response = await ai.models.generateContent({
-                model: currentModel,
-                contents: [{ parts: [{ text: text }] }],
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: {
-                        voiceConfig: {
-                            prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' },
-                        },
-                    },
-                },
-            });
-
-            const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-            if (!base64Audio) {
-                throw new Error("No audio data received.");
-            }
-
-            // Deduct credits directly via RPC (Reduced to 1 credit)
-            /*
-            const userId = useAppStore.getState().user?.id;
-            if (userId) {
-                const newCredits = await deductCredits(CREDIT_COSTS.AUDIO_PRONUNCIATION, userId);
-                if (newCredits !== null) {
-                    useAppStore.getState().updateUserCredits(newCredits);
-                } else {
-                    throw new Error("Crédits insuffisants");
-                }
-            } else {
-                throw new Error("Utilisateur non authentifié");
-            }
-            */
-
-            const binaryString = atob(base64Audio);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            console.log("[Gemini TTS] Audio generated successfully.");
-            return bytes.buffer as ArrayBuffer;
-
-        } catch (e) {
-            if (apiKey) reportFailedApiKey(apiKey);
-            console.warn(`[Gemini TTS] Failed (attempt ${attempt + 1}):`, e);
-            if (attempt === MAX_RETRIES) return null;
-            // Wait before retrying (exponential backoff)
-            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
-        }
+    try {
+        const { audioBase64 } = await callAI<{ audioBase64?: string }>('generate_speech', {
+            model: AUDIO_MODEL,
+            text,
+            voiceName: voiceName || 'Kore'
+        });
+        if (!audioBase64) throw new Error("No audio data received.");
+        return base64ToArrayBuffer(audioBase64);
+    } catch (e) {
+        console.warn('[Gemini TTS] Failed:', e);
+        return null;
     }
-    return null;
 };
 
 // 4. EXTRACTION VOCABULAIRE
@@ -372,117 +170,77 @@ export const extractVocabulary = async (history: ChatMessage[]): Promise<{ id: s
     const context = history.slice(-6).map(m => `${m.role}: ${m.text}`).join('\n');
     const prompt = `Based on the following conversation, extract 3 to 5 key vocabulary words. Return JSON array [{word, translation, example}].\n${context}`;
 
-    for (const model of TEXT_MODELS) {
-        let apiKey = '';
-        try {
-            apiKey = await getGeminiApiKey();
-            const ai = new GoogleGenAI({ apiKey });
-
-            const response = await ai.models.generateContent({
-                model: model,
-                contents: prompt,
-                config: {
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.ARRAY,
-                        items: {
-                            type: Type.OBJECT,
-                            properties: {
-                                word: { type: Type.STRING },
-                                translation: { type: Type.STRING },
-                                example: { type: Type.STRING }
-                            }
-                        }
-                    }
-                }
-            });
-
-            const rawData = JSON.parse(response.text || "[]");
-            
-            return rawData.map((item: { word: string; translation: string; example: string }) => ({
-                id: crypto.randomUUID(),
-                word: item.word,
-                translation: item.translation,
-                example: item.example,
-                mastered: false,
-                addedAt: Date.now()
-            }));
-
-        } catch (e: unknown) {
-            if (apiKey) reportFailedApiKey(apiKey);
-            console.warn(`extractVocabulary failed with model ${model}:`, e);
-        }
+    try {
+        const { json } = await callAI<{ json: { word: string; translation: string; example: string }[] }>('generate_json', {
+            model: TEXT_MODEL,
+            contents: prompt,
+            schemaType: 'ARRAY_VOCAB'
+        });
+        return (Array.isArray(json) ? json : []).map(item => ({
+            id: crypto.randomUUID(),
+            word: item.word,
+            translation: item.translation,
+            example: item.example,
+            mastered: false,
+            addedAt: Date.now()
+        }));
+    } catch (e: unknown) {
+        console.warn('extractVocabulary failed:', e);
+        return [];
     }
-    return [];
 };
 
 // 5. EXERCICES
 export const generateExerciseFromHistory = async (history: ChatMessage[], user: UserProfile): Promise<ExerciseItem[]> => {
     const recentContext = history.slice(-15).map(m => `${m.role === 'user' ? 'Élève' : 'Professeur'}: ${m.text}`).join('\n');
-    
+
     const prompt = `En tant que professeur de langue expert, génère 5 exercices interactifs basés sur la conversation récente ci-dessous pour un élève de niveau ${user.preferences?.level} apprenant le ${user.preferences?.targetLanguage}.
-    
+
     CONTEXTE DE LA CONVERSATION:
     ${recentContext}
-    
+
     INSTRUCTIONS:
     1. Les exercices doivent renforcer le vocabulaire et la grammaire vus dans la conversation.
     2. Varie les types d'exercices : multiple_choice (QCM), fill_blank (phrases à trous), true_false (vrai/faux).
     3. Pour 'fill_blank', la question doit contenir un "___" à l'endroit du mot manquant.
     4. Fournis une explication pédagogique détaillée pour chaque réponse.
     5. Adapte strictement la difficulté au niveau ${user.preferences?.level}.
-    
+
     Format JSON Array.`;
 
-    // Deduct credits first (1 credit for exercise generation)
     const newCredits = await deductCredits(CREDIT_COSTS.EXERCISE, user.id);
     if (newCredits === null) {
         throw new Error("CREDITS_EXHAUSTED");
     }
     useAppStore.getState().updateUserCredits(newCredits);
 
-    for (const model of TEXT_MODELS) {
-        let apiKey = '';
-        try {
-            apiKey = await getGeminiApiKey();
-            const ai = new GoogleGenAI({ apiKey });
-
-            const response = await ai.models.generateContent({
-                model: model,
-                contents: prompt,
-                config: {
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.ARRAY,
-                        items: {
-                            type: Type.OBJECT,
-                            properties: {
-                                id: { type: Type.STRING },
-                                type: { type: Type.STRING, enum: ["multiple_choice", "fill_blank", "true_false"] },
-                                question: { type: Type.STRING },
-                                options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                                correctAnswer: { type: Type.STRING },
-                                explanation: { type: Type.STRING }
-                            },
-                            required: ["type", "question", "correctAnswer", "explanation"]
-                        }
+    try {
+        const { json } = await callAI<{ json: ExerciseItem[] }>('generate_json', {
+            model: TEXT_MODEL,
+            contents: prompt,
+            config: {
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            id: { type: Type.STRING },
+                            type: { type: Type.STRING, enum: ["multiple_choice", "fill_blank", "true_false"] },
+                            question: { type: Type.STRING },
+                            options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                            correctAnswer: { type: Type.STRING },
+                            explanation: { type: Type.STRING }
+                        },
+                        required: ["type", "question", "correctAnswer", "explanation"]
                     }
                 }
-            });
-            
-            const exercises = JSON.parse(response.text || "[]");
-            return exercises.map((ex: { id?: string; type: string; question: string; options: string[]; correctAnswer: string; explanation: string }) => ({
-                ...ex,
-                id: ex.id || crypto.randomUUID()
-            }));
-        } catch (e: unknown) {
-            const error = e as Error;
-            if (apiKey) reportFailedApiKey(apiKey);
-            console.warn(`generateExerciseFromHistory failed with model ${model}:`, error);
-            if (error.message === "CREDITS_EXHAUSTED") throw error;
-        }
+            }
+        });
+        return (Array.isArray(json) ? json : []).map(ex => ({ ...ex, id: ex.id || crypto.randomUUID() }));
+    } catch (e: unknown) {
+        console.warn('generateExerciseFromHistory failed:', e);
+        return [];
     }
-    return [];
 };
 
 // 6. ROLEPLAY
@@ -492,79 +250,45 @@ export const generateRoleplayResponse = async (
     user: UserProfile,
     isClosing: boolean = false
 ): Promise<{ aiReply: string; correction?: string; explanation?: string; score?: number; feedback?: string }> => {
-    
-    const sysInstruct = `Partenaire de jeu de rôle (${user.preferences?.targetLanguage}, ${user.preferences?.level}). Scénario: ${scenarioPrompt}.`;
-    
+
+    const systemInstruction = `Partenaire de jeu de rôle (${user.preferences?.targetLanguage}, ${user.preferences?.level}). Scénario: ${scenarioPrompt}.`;
+
     const contextPrompt = history
         .filter(msg => msg.text && msg.text.trim().length > 0)
         .map(m => `${m.role}: ${m.text}`)
         .join('\n');
-        
+
     const finalPrompt = isClosing ? `${contextPrompt}\n\nÉvaluation finale` : (contextPrompt || "Start");
 
-    for (const model of TEXT_MODELS) {
-        let apiKey = '';
-        try {
-            apiKey = await getGeminiApiKey();
-            const ai = new GoogleGenAI({ apiKey });
+    try {
+        const { json } = await callAI<{ json: { aiReply: string; correction?: string; explanation?: string; score?: number; feedback?: string } }>('generate_json', {
+            model: TEXT_MODEL,
+            contents: finalPrompt,
+            config: { systemInstruction },
+            schemaType: 'OBJECT_ROLEPLAY'
+        });
 
-            const response = await ai.models.generateContent({
-                model: model,
-                contents: finalPrompt,
-                config: {
-                    systemInstruction: sysInstruct,
-                    responseMimeType: 'application/json',
-                    responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                            aiReply: { type: Type.STRING },
-                            correction: { type: Type.STRING },
-                            explanation: { type: Type.STRING },
-                            score: { type: Type.NUMBER },
-                            feedback: { type: Type.STRING }
-                        },
-                        required: ["aiReply"]
-                    }
-                }
-            });
-
-            // Deduct credits (1 credit for text generation)
-            const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
-            if (newCredits === null) {
-                throw new Error("CREDITS_EXHAUSTED");
-            }
-            useAppStore.getState().updateUserCredits(newCredits);
-
-            return JSON.parse(response.text || "{}");
-        } catch (e: unknown) {
-            const error = e as Error;
-            if (apiKey) reportFailedApiKey(apiKey);
-            console.warn(`generateRoleplayResponse failed with model ${model}:`, error);
-            if (error.message === "CREDITS_EXHAUSTED") {
-                return { aiReply: "⚠️ Crédits insuffisants." };
-            }
+        const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
+        if (newCredits === null) {
+            return { aiReply: "⚠️ Crédits insuffisants." };
         }
+        useAppStore.getState().updateUserCredits(newCredits);
+
+        return json?.aiReply ? json : { aiReply: "Problème technique." };
+    } catch (e: unknown) {
+        console.warn('generateRoleplayResponse failed:', e);
+        if (isCreditError(e)) return { aiReply: "⚠️ Crédits insuffisants." };
+        return { aiReply: "Problème technique." };
     }
-    return { aiReply: "Problème technique." };
 };
 
 // 7. GENERIC TEXT GENERATION
 export const generateText = async (prompt: string): Promise<string> => {
-    for (const model of TEXT_MODELS) {
-        let apiKey = '';
-        try {
-            apiKey = await getGeminiApiKey();
-            const ai = new GoogleGenAI({ apiKey });
-
-            const response = await ai.models.generateContent({
-                model: model,
-                contents: prompt
-            });
-            return response.text || "";
-        } catch (e) {
-            if (apiKey) reportFailedApiKey(apiKey);
-            console.warn(`generateText failed with model ${model}:`, e);
-        }
+    try {
+        const { text } = await callAI<{ text: string }>('generate', { model: TEXT_MODEL, contents: prompt });
+        return text || "";
+    } catch (e) {
+        console.warn('generateText failed:', e);
+        return "";
     }
-    return "";
 };

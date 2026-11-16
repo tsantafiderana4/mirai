@@ -1,0 +1,17 @@
+# Dépendances et builds
+node_modules/
+dist/
+dev-dist/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Divers
+.DS_Store
+*.log
+supabase/.temp/

@@ -1,114 +1,17 @@
 
 import { UserProfile } from "../../types";
 import { SmartExam, ExamResultDetailed, ExamType, ExamQuestion } from "./types";
-import { TEXT_MODEL, TEXT_MODELS, getGeminiApiKey, reportFailedApiKey } from "../../services/geminiService";
+import { TEXT_MODEL } from "../../services/geminiService";
+import { callAI, AIAction } from "../../services/aiClient";
 import { CREDIT_COSTS, deductCredits } from "../../services/creditService";
-import { supabase, supabaseUrl, supabaseAnonKey } from "../../lib/supabase";
+import { supabase } from "../../lib/supabase";
 import { useAppStore } from "../../store/useAppStore";
-import { GoogleGenAI } from "@google/genai";
 
-// Helper to call edge function directly for specific schemas not covered by geminiService generic methods
-const callGeminiFunction = async (action: string, payload: Record<string, unknown>) => {
-    try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token;
-
-        if (!token) {
-            throw new Error("Session expirée ou non autorisée. Veuillez vous reconnecter.");
-        }
-
-        const response = await fetch(`${supabaseUrl}/functions/v1/gemini-api`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-                'apikey': supabaseAnonKey
-            },
-            body: JSON.stringify({ action, ...payload })
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            if (data.newBalance !== undefined && data.newBalance !== null) {
-                useAppStore.getState().updateUserCredits(data.newBalance);
-            }
-            return data;
-        }
-
-        // Handle specific errors from Edge Function
-        let errorData;
-        try {
-            errorData = await response.json();
-        } catch {
-            const text = await response.text();
-            throw new Error(`Erreur serveur IA (Code: ${response.status}). ${text}`);
-        }
-
-        console.error(`[Gemini Function] Error calling ${action}:`, errorData);
-        
-        if (response.status === 402) {
-            throw new Error(`Crédits insuffisants: ${errorData.error || errorData.message}`);
-        }
-        
-        if (response.status === 401) {
-            throw new Error("Session expirée ou non autorisée. Veuillez vous reconnecter.");
-        }
-
-        throw new Error(errorData.error || errorData.message || `Erreur serveur IA (${response.status})`);
-
-    } catch (e: unknown) {
-        const error = e as Error;
-        // If it's a credit error or auth error, don't fallback, just rethrow
-        if (error.message.includes("Crédits insuffisants") || error.message.includes("Session expirée")) {
-            throw error;
-        }
-
-        console.warn(`[Gemini Function] Edge function failed (${error.message}), falling back to direct SDK...`);
-        
-        // FALLBACK: Direct SDK Call
-        if (action === 'generate_json' || action === 'generate_exam') {
-            let lastError: Error | null = null;
-            for (const model of TEXT_MODELS) {
-                let apiKey = '';
-                try {
-                    apiKey = await getGeminiApiKey();
-                    const ai = new GoogleGenAI({ apiKey });
-                    
-                    const contents = payload.contents;
-                    const config = (payload.config as Record<string, unknown>) || {};
-                    
-                    // Format contents for SDK
-                    const formattedContents = typeof contents === 'string' 
-                        ? [{ role: 'user', parts: [{ text: contents }] }] 
-                        : contents;
-
-                    const result = await ai.models.generateContent({
-                        model: model,
-                        contents: formattedContents as { role: string; parts: { text: string }[] }[],
-                        config: {
-                            ...config,
-                            responseMimeType: 'application/json',
-                        }
-                    });
-
-                    const rawText = result.text || "{}";
-                    const cleanText = rawText.replace(/```json\n?|```/g, '').trim();
-                    return { json: JSON.parse(cleanText) };
-
-                } catch (sdkError: unknown) {
-                    const sError = sdkError as Error;
-                    if (apiKey) reportFailedApiKey(apiKey);
-                    lastError = sError;
-                    console.warn(`[Gemini SDK Fallback] Failed with model ${model}:`, sError);
-                    // Continue to next model
-                }
-            }
-            throw new Error(`Erreur IA (Fallback): ${lastError?.message || 'Tous les modèles ont échoué'}`);
-        }
-        
-        throw error;
-    }
-};
+// Appel à l'Edge Function (facturation des examens faite côté serveur)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AIJson = any; // forme validée au cas par cas par les appelants
+const callGeminiFunction = (action: AIAction, payload: Record<string, unknown>) =>
+    callAI<{ json?: AIJson; text?: string; newBalance?: number }>(action, payload);
 
 export const SmartExamService = {
     
@@ -285,12 +188,10 @@ export const SmartExamService = {
                 }
             });
 
-            const sections = data.json?.sections;
-            
+            // Le serveur rembourse automatiquement si l'examen est invalide.
+            const sections = (data.json as { sections?: SmartExam['sections'] } | undefined)?.sections;
+
             if (!sections || !Array.isArray(sections) || sections.length === 0) {
-                // Refund credits since the generation failed to produce a valid exam
-                const cost = type === 'certification' ? 100 : 40;
-                await supabase.rpc('consume_credits', { p_amount: -cost });
                 throw new Error("Format d'examen invalide (Sections manquantes)");
             }
 

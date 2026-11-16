@@ -1,17 +1,28 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3'
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.39.3'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// Coût débité côté serveur, par action.
+// Les actions "texte" sont encore facturées côté client (creditService) :
+// on ne les re-débite pas ici pour éviter la double facturation, mais on
+// exige un compte connecté, non suspendu, avec un solde positif.
 const COSTS: Record<string, number> = {
-  generate: 1,
-  generate_stream: 1,
-  generate_json: 1,
-  generate_speech: 2,
-  charge_voice_minute: 3
+  generate: 0,
+  generate_stream: 0,
+  generate_json: 0,
+  generate_speech: 0,
+  charge_voice_minute: 3,
+  live_token: 0,
 }
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -19,95 +30,79 @@ Deno.serve(async (req) => {
   }
 
   let creditsDeducted = 0;
-  let supabaseClientForRefund: ReturnType<typeof createClient> | null = null;
+  let refundUserId: string | null = null;
+  let adminClient: SupabaseClient | null = null;
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 
-    if (!supabaseUrl || !supabaseAnonKey) {
+    if (!supabaseUrl || !supabaseAnonKey || !serviceRoleKey) {
       console.error('Missing Supabase environment variables')
-      return new Response(JSON.stringify({ error: 'Configuration serveur incomplète (Env vars manquantes).' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
-    }
-
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Non autorisé. Token manquant.' }), { 
-        status: 401, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      })
+      return json({ error: 'Configuration serveur incomplète (Env vars manquantes).' }, 500)
     }
 
     const body = await req.json()
     const { action, model, contents, config, schemaType, text, voiceName } = body
-    
+
     if (action === 'health') {
-        const apiKey = Deno.env.get('GEMINI_API_KEY');
-        const hasUrl = !!Deno.env.get('SUPABASE_URL');
-        const hasAnonKey = !!Deno.env.get('SUPABASE_ANON_KEY');
-        return new Response(JSON.stringify({ 
-            status: 'ok', 
-            hasKey: !!apiKey,
-            hasUrl,
-            hasAnonKey
-        }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
+      return json({ status: 'ok' })
     }
 
-    const supabaseClient = createClient(
-      supabaseUrl,
-      supabaseAnonKey,
-      { global: { headers: { Authorization: authHeader } } }
-    )
-    supabaseClientForRefund = supabaseClient;
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) {
+      return json({ error: 'Non autorisé. Token manquant.' }, 401)
+    }
 
-    let cost = COSTS[action] || 0
+    // Client "utilisateur" : les RPC s'exécutent avec SES droits (RLS).
+    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    })
+    // Client "serveur" : lecture des clés API et remboursements uniquement.
+    adminClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false },
+    })
+
+    const token = authHeader.replace('Bearer ', '')
+    const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token)
+    if (authError || !user) {
+      return json({ error: 'Utilisateur non authentifié.' }, 401)
+    }
+
+    const { data: profile } = await adminClient
+      .from('profiles')
+      .select('credits, is_suspended, role')
+      .eq('id', user.id)
+      .single()
+
+    if (!profile || profile.is_suspended) {
+      return json({ error: 'Compte suspendu ou introuvable.' }, 403)
+    }
+
+    let cost = COSTS[action] ?? 0
     if (action === 'generate_exam') {
-        cost = body.examType === 'certification' ? 100 : 40;
+      cost = body.examType === 'certification' ? 100 : 40
     }
 
-    let newBalance: number | null = null;
+    if (cost === 0 && profile.role !== 'admin' && (profile.credits ?? 0) <= 0) {
+      return json({ error: 'Crédits insuffisants.' }, 402)
+    }
+
+    let newBalance: number | null = null
 
     if (cost > 0) {
-      const token = authHeader.replace('Bearer ', '');
-      const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token);
-      if (authError || !user) {
-        console.error('[Auth Error]', authError?.message || 'No user found');
-        return new Response(JSON.stringify({ 
-          error: 'Utilisateur non authentifié.', 
-          details: authError?.message,
-          hint: 'Vérifiez que vous êtes bien connecté et que le token n\'est pas expiré.'
-        }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-      }
-
       const { data: newBalanceResult, error: rpcError } = await supabaseClient.rpc('consume_credits', { p_amount: cost })
-      
       if (rpcError || newBalanceResult === null) {
-        console.error('[Billing Error]', rpcError || 'Insufficient credits')
-        return new Response(JSON.stringify({ 
-          error: 'Crédits insuffisants ou accès refusé.',
-          details: rpcError ? rpcError.message : 'Balance returned null (insuffisant ou profil introuvable)'
-        }), {
-          status: 402,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        return json({ error: 'Crédits insuffisants ou accès refusé.' }, 402)
       }
-      
-      newBalance = newBalanceResult;
-      creditsDeducted = cost;
+      newBalance = newBalanceResult as number
+      creditsDeducted = cost
+      refundUserId = user.id
     }
 
     if (action === 'charge_voice_minute') {
-       return new Response(JSON.stringify({ success: true, newBalance }), { 
-         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-       })
+      return json({ success: true, newBalance })
     }
 
     // 4. RÉCUPÉRATION DES CLÉS API (ROTATION DYNAMIQUE)
@@ -115,7 +110,7 @@ Deno.serve(async (req) => {
     
     // Tentative de récupération depuis la base de données (Table api_keys)
     try {
-        const { data: dbKeys, error: keysError } = await supabaseClient.rpc('get_active_api_keys', { p_provider: 'gemini' })
+        const { data: dbKeys, error: keysError } = await adminClient.rpc('get_active_api_keys', { p_provider: 'gemini' })
         if (!keysError && dbKeys && dbKeys.length > 0) {
             keys = (dbKeys as { key_value: string }[]).map(k => k.key_value)
         } else if (keysError && keysError.code !== 'P0001' && keysError.message !== 'function public.get_active_api_keys(text) does not exist') {
@@ -216,6 +211,31 @@ Deno.serve(async (req) => {
     const targetModel = model || 'gemini-3-flash-preview'
     const { systemInstruction, ...genConfig } = config || {}
 
+    if (action === 'live_token') {
+      // Jeton éphémère pour l'API Live (voix temps réel) : la vraie clé ne
+      // quitte jamais le serveur. 1 utilisation, session à ouvrir sous 2 min.
+      const now = Date.now()
+      const tokenBody = {
+        uses: 1,
+        expireTime: new Date(now + 30 * 60 * 1000).toISOString(),
+        newSessionExpireTime: new Date(now + 2 * 60 * 1000).toISOString(),
+      }
+      let lastErr = ''
+      for (const k of [...keys].sort(() => Math.random() - 0.5)) {
+        const res = await fetch('https://generativelanguage.googleapis.com/v1alpha/auth_tokens', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': k },
+          body: JSON.stringify(tokenBody),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          return json({ token: data.name })
+        }
+        lastErr = `${res.status} ${await res.text()}`
+      }
+      throw new Error(`Impossible de créer un jeton Live: ${lastErr}`)
+    }
+
     if (action === 'generate') {
       const payload: Record<string, unknown> = {
           contents: typeof contents === 'string' ? [{ parts: [{ text: contents }] }] : contents,
@@ -298,7 +318,12 @@ Deno.serve(async (req) => {
         const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}"
         try {
             const cleanText = rawText.replace(/```json\n?|```/g, '').trim();
-            return new Response(JSON.stringify({ json: JSON.parse(cleanText), newBalance }), {
+            const parsed = JSON.parse(cleanText)
+            if (action === 'generate_exam' && (!Array.isArray(parsed?.sections) || parsed.sections.length === 0)) {
+                // Examen inutilisable : on lève une erreur pour déclencher le remboursement
+                throw new Error("Examen généré invalide (sections manquantes)")
+            }
+            return new Response(JSON.stringify({ json: parsed, newBalance }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             })
         } catch (parseError: unknown) {
@@ -325,15 +350,12 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: `Action inconnue: ${action}` }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 
   } catch (error: unknown) {
-    if (creditsDeducted > 0 && supabaseClientForRefund) {
-        console.log(`[Refund] System error occurred, refunding ${creditsDeducted} credits...`);
-        await supabaseClientForRefund.rpc('consume_credits', { p_amount: -creditsDeducted });
+    if (creditsDeducted > 0 && refundUserId && adminClient) {
+      console.log(`[Refund] ${creditsDeducted} crédits remboursés à ${refundUserId}`)
+      await adminClient.rpc('refund_credits', { p_user_id: refundUserId, p_amount: creditsDeducted })
     }
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error)
     console.error('[Edge Function Error]', error)
-    return new Response(JSON.stringify({ error: errorMessage }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+    return json({ error: errorMessage }, 500)
   }
 })
