@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { UserProfile } from '../types';
 import { generateSpeech } from '../services/geminiService';
-import { CREDIT_COSTS, deductCredits } from '../services/creditService';
+import { CREDIT_COSTS } from '../services/creditService';
 import { useTranslation } from '../contexts/LanguageContext';
 
 function pcmToAudioBuffer(data: Uint8Array, ctx: AudioContext, sampleRate: number = 30000) {
@@ -45,29 +45,15 @@ export const useAudio = (user: UserProfile | null, notify: (m: string, t?: strin
             return;
         }
         
-        // Deduct credits
-        try {
-            const newBalance = await deductCredits(cost, user.id);
-            if (newBalance !== null) {
-                // Update global state for immediate UI feedback
-                const { useAppStore } = await import('../store/useAppStore');
-                useAppStore.getState().updateUserCredits(newBalance);
-            } else {
-                notify(t('chat.credit_deduction_error'), "error");
-                return;
-            }
-        } catch (e) {
-            notify(t('chat.credit_deduction_error'), "error");
-            return;
-        }
-
+        // Le serveur débite le coût (mot : 1, message : 2) au moment de la génération
         stopSpeaking();
         setIsLoadingAudio(true);
         setSpeakingMessageId(id);
 
         try {
             const cleanText = text.replace(/[#*`_]/g, '').replace(/\[Leçon \d+\]/gi, '');
-            const pcmBuffer = await generateSpeech(cleanText, user.preferences?.voiceName || 'Kore');
+            const purpose = cost <= CREDIT_COSTS.AUDIO_PRONUNCIATION ? 'tts_word' : 'tts_message';
+            const pcmBuffer = await generateSpeech(cleanText, user.preferences?.voiceName || 'Kore', purpose);
             
             if (!pcmBuffer) {
                 const utterance = new SpeechSynthesisUtterance(cleanText);

@@ -221,8 +221,10 @@ const DebugConsole: React.FC = () => {
 
               console.log("Testing Credits RPC...");
               try {
-                  // Test consume_credits with 0 amount to check balance and RPC existence
-                  const { data, error } = await supabase.rpc('consume_credits', { p_amount: 0 });
+                  // Lecture du solde (consume_credits refuse désormais les montants <= 0)
+                  const { data: profileRow, error } = await supabase
+                      .from('profiles').select('credits').eq('id', session.user.id).single();
+                  const data = profileRow?.credits;
                   
                   if (error) {
                       console.error("RPC Error:", error);
@@ -242,7 +244,7 @@ const DebugConsole: React.FC = () => {
               console.log("Testing Gemini Direct...");
               try {
                   const { generateText } = await import('../services/geminiService');
-                  const result = await generateText("Hello Gemini, are you there?");
+                  const result = await generateText("Hello Gemini, are you there?", 'diagnostic');
                   console.log("Gemini Response:", result);
                   toast.success(`Gemini OK: ${result}`);
               } catch (e: any) {

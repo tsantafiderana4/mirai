@@ -323,6 +323,7 @@ export const SmartExamService = {
             };
 
             const data = await callGeminiFunction('generate_json', {
+                purpose: 'exam_evaluation', // gratuit : l'examen a déjà été payé
                 model: TEXT_MODEL,
                 contents: parts,
                 config: {

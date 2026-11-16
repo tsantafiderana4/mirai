@@ -2,12 +2,13 @@ import { UserProfile, ChatMessage, ExerciseItem } from "../types";
 import { SYSTEM_PROMPT_TEMPLATE, SUPPORT_AGENT_PROMPT } from "../constants";
 import { useAppStore } from '../store/useAppStore';
 import { Type } from "@google/genai";
-import { CREDIT_COSTS, deductCredits } from "./creditService";
-import { callAI, streamAI, base64ToArrayBuffer, AIError } from "./aiClient";
+import { callAI, streamAI, base64ToArrayBuffer, isCreditError, AIPurpose } from "./aiClient";
 
 // Toutes les fonctions ci-dessous passent par l'Edge Function `gemini-api`
-// (voir aiClient.ts). Le serveur gère la rotation des clés et le repli
-// automatique sur d'autres modèles : le navigateur ne voit jamais de clé.
+// (voir aiClient.ts). Le serveur gère la rotation des clés, le repli
+// automatique sur d'autres modèles ET la facturation : chaque appel
+// indique son usage (`purpose`) et le serveur débite le bon montant.
+// Le navigateur ne débite plus jamais de crédits lui-même pour l'IA.
 
 // Modèles par défaut (le serveur essaie ensuite sa propre chaîne de repli)
 export const TEXT_MODELS = [
@@ -19,8 +20,6 @@ export const TEXT_MODELS = [
 ];
 export const TEXT_MODEL = TEXT_MODELS[0];
 export const AUDIO_MODEL = 'gemini-2.5-flash-preview-tts';
-
-const isCreditError = (e: unknown) => e instanceof AIError && e.status === 402;
 
 // --- QUOTA AGENT SUPPORT (local) ---
 const SUPPORT_QUOTA_KEY = 'tm_support_quota';
@@ -80,6 +79,7 @@ export const generateSupportResponse = async (
 
     try {
         const { text } = await callAI<{ text: string }>('generate', {
+            purpose: 'support',
             model: TEXT_MODEL,
             contents: prompt,
             config: { systemInstruction, maxOutputTokens: 2000, temperature: 0.5 }
@@ -120,6 +120,7 @@ export async function* sendMessageStream(
   let success = false;
   try {
       for await (const chunk of streamAI({
+          purpose: 'chat_lesson',
           model: TEXT_MODEL,
           contents: finalMessage,
           config: { systemInstruction, temperature: 0.7, maxOutputTokens: 8192 }
@@ -130,26 +131,28 @@ export async function* sendMessageStream(
   } catch (e: unknown) {
       console.warn('[Gemini] Stream failed:', e);
       if (isCreditError(e)) {
-          yield "⛔ **Crédits épuisés.**\n\nVeuillez recharger votre compte pour continuer.";
+          throw new Error("CREDITS_EXHAUSTED");
+      }
+      if (e instanceof Error && e.message && !success) {
+          yield `⚠️ ${e.message}`;
           return;
       }
   }
 
   if (!success) {
       yield "⚠️ Désolé, le service est temporairement indisponible. Veuillez réessayer dans un instant.";
-      return;
-  }
-
-  const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
-  if (newCredits !== null) {
-      useAppStore.getState().updateUserCredits(newCredits);
   }
 }
 
 // 3. TEXT-TO-SPEECH (TTS) — renvoie du PCM brut (24 kHz, 16 bits)
-export const generateSpeech = async (text: string, voiceName: string = 'Kore'): Promise<ArrayBuffer | null> => {
+export const generateSpeech = async (
+    text: string,
+    voiceName: string = 'Kore',
+    purpose: Extract<AIPurpose, 'tts_message' | 'tts_word' | 'tts_exam'> = 'tts_message'
+): Promise<ArrayBuffer | null> => {
     try {
         const { audioBase64 } = await callAI<{ audioBase64?: string }>('generate_speech', {
+            purpose,
             model: AUDIO_MODEL,
             text,
             voiceName: voiceName || 'Kore'
@@ -172,6 +175,7 @@ export const extractVocabulary = async (history: ChatMessage[]): Promise<{ id: s
 
     try {
         const { json } = await callAI<{ json: { word: string; translation: string; example: string }[] }>('generate_json', {
+            purpose: 'vocabulary',
             model: TEXT_MODEL,
             contents: prompt,
             schemaType: 'ARRAY_VOCAB'
@@ -208,14 +212,9 @@ export const generateExerciseFromHistory = async (history: ChatMessage[], user: 
 
     Format JSON Array.`;
 
-    const newCredits = await deductCredits(CREDIT_COSTS.EXERCISE, user.id);
-    if (newCredits === null) {
-        throw new Error("CREDITS_EXHAUSTED");
-    }
-    useAppStore.getState().updateUserCredits(newCredits);
-
     try {
         const { json } = await callAI<{ json: ExerciseItem[] }>('generate_json', {
+            purpose: 'exercise',
             model: TEXT_MODEL,
             contents: prompt,
             config: {
@@ -239,6 +238,7 @@ export const generateExerciseFromHistory = async (history: ChatMessage[], user: 
         return (Array.isArray(json) ? json : []).map(ex => ({ ...ex, id: ex.id || crypto.randomUUID() }));
     } catch (e: unknown) {
         console.warn('generateExerciseFromHistory failed:', e);
+        if (isCreditError(e)) throw new Error("CREDITS_EXHAUSTED");
         return [];
     }
 };
@@ -262,17 +262,12 @@ export const generateRoleplayResponse = async (
 
     try {
         const { json } = await callAI<{ json: { aiReply: string; correction?: string; explanation?: string; score?: number; feedback?: string } }>('generate_json', {
+            purpose: 'dialogue_message',
             model: TEXT_MODEL,
             contents: finalPrompt,
             config: { systemInstruction },
             schemaType: 'OBJECT_ROLEPLAY'
         });
-
-        const newCredits = await deductCredits(CREDIT_COSTS.DIALOGUE_MESSAGE, user.id);
-        if (newCredits === null) {
-            return { aiReply: "⚠️ Crédits insuffisants." };
-        }
-        useAppStore.getState().updateUserCredits(newCredits);
 
         return json?.aiReply ? json : { aiReply: "Problème technique." };
     } catch (e: unknown) {
@@ -283,9 +278,12 @@ export const generateRoleplayResponse = async (
 };
 
 // 7. GENERIC TEXT GENERATION
-export const generateText = async (prompt: string): Promise<string> => {
+export const generateText = async (
+    prompt: string,
+    purpose: Extract<AIPurpose, 'translation' | 'diagnostic'> = 'translation'
+): Promise<string> => {
     try {
-        const { text } = await callAI<{ text: string }>('generate', { model: TEXT_MODEL, contents: prompt });
+        const { text } = await callAI<{ text: string }>('generate', { purpose, model: TEXT_MODEL, contents: prompt });
         return text || "";
     } catch (e) {
         console.warn('generateText failed:', e);

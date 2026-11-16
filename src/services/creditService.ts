@@ -1,5 +1,8 @@
 import { supabase } from "../lib/supabase";
 
+// Tarifs AFFICHÉS dans l'interface. La facturation réelle de l'IA est faite
+// par le serveur (supabase/functions/gemini-api/pricing.ts) : garder les deux
+// alignés. Seul CERTIFICATE_UNLOCK est encore débité depuis le client.
 export const CREDIT_COSTS = {
   LESSON: 2,
   AUDIO_MESSAGE: 2,

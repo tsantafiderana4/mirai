@@ -6,7 +6,8 @@ export type TTSModel = 'gemini-2.5-flash-preview-tts' | 'gemini-2.5-pro-preview-
 const SAMPLE_RATE = 24000; // le TTS Gemini renvoie du PCM 16 bits mono 24 kHz
 
 /**
- * Lecture vocale d'un texte. L'audio est généré côté serveur (Edge Function),
+ * Lecture vocale d'un texte (utilisée pour les retours d'examen : gratuite).
+ * L'audio est généré côté serveur (Edge Function),
  * puis joué via Web Audio (PCM brut, pas un fichier WAV).
  * Le paramètre `model` est conservé pour compatibilité ; le serveur choisit
  * le modèle TTS disponible.
@@ -25,7 +26,7 @@ export const useTTS = () => {
         setError(null);
 
         try {
-            const pcm = await fetchSpeech(text, voice);
+            const pcm = await fetchSpeech(text, voice, 'tts_exam');
             if (!pcm) throw new Error('Aucun audio reçu.');
 
             const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;

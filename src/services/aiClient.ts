@@ -17,6 +17,21 @@ export type AIAction =
     | 'charge_voice_minute'
     | 'live_token';
 
+/** Usage déclaré au serveur : il détermine le prix (voir pricing.ts côté serveur). */
+export type AIPurpose =
+    | 'chat_lesson'
+    | 'dialogue_message'
+    | 'exercise'
+    | 'tts_message'
+    | 'tts_word'
+    | 'tts_exam'
+    | 'exam_evaluation'
+    | 'vocabulary'
+    | 'support'
+    | 'cultural'
+    | 'translation'
+    | 'diagnostic';
+
 export class AIError extends Error {
     constructor(message: string, public status: number) {
         super(message);
@@ -77,6 +92,10 @@ export async function callAI<T = Record<string, unknown>>(
 /** Streaming SSE : renvoie les morceaux de texte au fil de l'eau. */
 export async function* streamAI(payload: Record<string, unknown>): AsyncGenerator<string> {
     const response = await post('generate_stream', payload);
+    const balance = Number(response.headers.get('x-new-balance'));
+    if (response.headers.has('x-new-balance') && Number.isFinite(balance)) {
+        useAppStore.getState().updateUserCredits(balance);
+    }
     const reader = response.body?.getReader();
     if (!reader) return;
 
@@ -108,3 +127,6 @@ export function base64ToArrayBuffer(base64: string): ArrayBuffer {
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return bytes.buffer as ArrayBuffer;
 }
+
+export const isCreditError = (e: unknown) => e instanceof AIError && e.status === 402;
+export const isRateLimitError = (e: unknown) => e instanceof AIError && e.status === 429;

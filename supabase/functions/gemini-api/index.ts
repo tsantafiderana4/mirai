@@ -1,21 +1,12 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.39.3'
 
+import { priceRequest, RATE_LIMIT_MESSAGES } from './pricing.ts'
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
-
-// Coût débité côté serveur, par action.
-// Les actions "texte" sont encore facturées côté client (creditService) :
-// on ne les re-débite pas ici pour éviter la double facturation, mais on
-// exige un compte connecté, non suspendu, avec un solde positif.
-const COSTS: Record<string, number> = {
-  generate: 0,
-  generate_stream: 0,
-  generate_json: 0,
-  generate_speech: 0,
-  charge_voice_minute: 3,
-  live_token: 0,
+  // Permet au navigateur de lire le nouveau solde pendant un streaming
+  'Access-Control-Expose-Headers': 'x-new-balance',
 }
 
 const json = (body: unknown, status = 200) =>
@@ -80,21 +71,32 @@ Deno.serve(async (req) => {
       return json({ error: 'Compte suspendu ou introuvable.' }, 403)
     }
 
-    let cost = COSTS[action] ?? 0
-    if (action === 'generate_exam') {
-      cost = body.examType === 'certification' ? 100 : 40
+    const isAdmin = profile.role === 'admin'
+    const { cost, free, generates } = priceRequest(action, body.purpose, body.examType)
+
+    if (!isAdmin && cost === 0 && (profile.credits ?? 0) <= 0) {
+      return json({ error: 'Crédits insuffisants.' }, 402)
     }
 
-    if (cost === 0 && profile.role !== 'admin' && (profile.credits ?? 0) <= 0) {
-      return json({ error: 'Crédits insuffisants.' }, 402)
+    // Limite de débit (anti-abus) avant tout appel à Gemini
+    if (generates && !isAdmin) {
+      const { data: limited, error: rateError } = await adminClient.rpc('ai_rate_check', {
+        p_user_id: user.id,
+        p_is_free: free,
+      })
+      if (rateError) {
+        console.warn('[Rate limit] indisponible :', rateError.message)
+      } else if (limited) {
+        return json({ error: RATE_LIMIT_MESSAGES[limited as string] || 'Limite atteinte.', limit: limited }, 429)
+      }
     }
 
     let newBalance: number | null = null
 
-    if (cost > 0) {
+    if (cost > 0 && !isAdmin) {
       const { data: newBalanceResult, error: rpcError } = await supabaseClient.rpc('consume_credits', { p_amount: cost })
       if (rpcError || newBalanceResult === null) {
-        return json({ error: 'Crédits insuffisants ou accès refusé.' }, 402)
+        return json({ error: 'Crédits insuffisants.' }, 402)
       }
       newBalance = newBalanceResult as number
       creditsDeducted = cost
@@ -245,7 +247,7 @@ Deno.serve(async (req) => {
 
       const res = await fetchWithSmartRotation('generateContent', payload, keys, targetModel);
       const data = await res.json()
-      return new Response(JSON.stringify({ text: data.candidates?.[0]?.content?.parts?.[0]?.text || "" }), {
+      return new Response(JSON.stringify({ text: data.candidates?.[0]?.content?.parts?.[0]?.text || "", newBalance }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
@@ -293,7 +295,9 @@ Deno.serve(async (req) => {
             }
         })
 
-        return new Response(stream, { headers: { ...corsHeaders, 'Content-Type': 'text/event-stream' } })
+        const streamHeaders: Record<string, string> = { ...corsHeaders, 'Content-Type': 'text/event-stream' }
+        if (newBalance !== null) streamHeaders['x-new-balance'] = String(newBalance)
+        return new Response(stream, { headers: streamHeaders })
     }
 
     if (action === 'generate_json' || action === 'generate_exam') {

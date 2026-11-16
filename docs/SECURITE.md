@@ -14,10 +14,32 @@
 | Coupons listables par tous, `use_coupon` créditait n'importe qui | Lecture réservée aux admins, crédit au seul appelant. |
 | Un utilisateur pouvait approuver sa propre demande | Seuls les admins modifient `admin_requests`. |
 
+## Facturation côté serveur (2e étape)
+
+L'Edge Function débite les crédits **avant** d'appeler Gemini et rembourse automatiquement en cas d'échec. Le navigateur indique seulement l'usage (`purpose`), et le prix est fixé par le serveur dans `supabase/functions/gemini-api/pricing.ts`. Un usage inconnu coûte 1 crédit et n'est jamais gratuit.
+
+| Usage | Crédits |
+|---|---|
+| Message de leçon (chat) | 2 |
+| Message de dialogue (démarrage, réponse, évaluation) | 1 |
+| Série d'exercices | 5 |
+| Audio d'un message / d'un mot | 2 / 1 |
+| Minute d'appel vocal | 5 |
+| Examen diagnostic / certification | 40 / 100 |
+| Aide, vocabulaire, culture, traduction, correction et audio d'examen | 0, mais plafonné à 150 par jour |
+
+Limites par utilisateur (admins exemptés) : 20 requêtes IA par minute et 400 par jour (`ai_rate_check`).
+
+Au passage, deux doubles facturations sont corrigées : un message de leçon coûtait 3 crédits au lieu de 2, et un message de dialogue 2 au lieu de 1. La minute vocale est réalignée sur les 5 crédits affichés.
+
 ## Déploiement (dans cet ordre)
 
 1. **Changer les clés Gemini** dans Google AI Studio : les anciennes ont été publiques.
-2. **SQL** : exécuter `supabase/migrations/20261116000000_security_hardening.sql` dans Supabase > SQL Editor. Le script peut être relancé sans risque.
+2. **SQL** : exécuter dans Supabase > SQL Editor, dans l'ordre :
+   - `supabase/migrations/20261116000000_security_hardening.sql`
+   - `supabase/migrations/20261117000000_ai_rate_limits.sql`
+
+   Les deux scripts peuvent être relancés sans risque.
 3. **Clés** : ajouter les nouvelles clés dans le tableau de bord admin (table `api_keys`), ou avec `supabase secrets set GEMINI_API_KEY=...`.
 4. **Edge Function** : `supabase functions deploy gemini-api`. `SUPABASE_SERVICE_ROLE_KEY` est fourni automatiquement par Supabase.
 5. **Front** : redéployer. Retirer `GEMINI_API_KEY` / `VITE_GOOGLE_API_KEY` des variables d'environnement de l'hébergeur (Render…), qui ne servent plus côté front.
@@ -29,10 +51,12 @@
 PGHOST=/chemin/socket PGPORT=5432 ./supabase/tests/run.sh
 ```
 
-Le script rejoue 10 attaques avant puis après la migration, et vérifie que les usages normaux fonctionnent toujours.
+Le script rejoue 10 attaques avant puis après la migration, vérifie que les usages normaux fonctionnent toujours, puis teste la limite de débit.
+
+Tests de tarification (Deno) : `deno test supabase/functions/gemini-api/pricing.test.ts`
 
 ## Reste à faire
 
-- Facturer les crédits **entièrement côté serveur**. Aujourd'hui l'Edge Function exige un solde positif, mais le débit des messages texte est encore déclenché par le client (`creditService`).
-- Ajouter une limite de débit (rate limiting) par utilisateur sur l'Edge Function.
+- Le déblocage de certificat (100 crédits) est encore débité depuis le client.
+- Si Gemini coupe en plein streaming, le message déjà commencé n'est pas remboursé.
 - `resolve_login` permet de retrouver l'email d'un compte à partir de son pseudo.

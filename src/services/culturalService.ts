@@ -19,6 +19,7 @@ export async function generateCulturalIntro(
   `;
 
   const { json } = await callAI<{ json: Omit<CulturalIntro, 'language' | 'level'> }>('generate_json', {
+    purpose: 'cultural',
     model: TEXT_MODEL,
     contents: prompt,
     config: {

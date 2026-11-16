@@ -439,39 +439,6 @@ export const storageService = {
       return localUser.credits >= minCredits;
   },
 
-  consumeCredit: async (userId: string): Promise<boolean> => {
-      return storageService.deductCredits(userId, 1);
-  },
-
-  deductCredits: async (userId: string, amount: number): Promise<boolean> => {
-      const local = storageService.getLocalUser();
-      if (!local || local.credits < amount) return false;
-
-      // Optimistic update
-      storageService.saveLocalUser({ ...local, credits: local.credits - amount });
-
-      if (!isSupabaseConfigured()) return true;
-
-      try {
-          // Background sync
-          supabase.rpc('consume_credits', {
-              p_amount: amount
-          }).then(({ data, error }) => {
-              if (error) {
-                  console.warn("RPC consume_credits failed:", error);
-                  // Rollback will happen naturally via real-time subscription if needed
-              } else if (typeof data === 'number') {
-                  const currentLocal = storageService.getLocalUser();
-                  if (currentLocal) storageService.saveLocalUser({ ...currentLocal, credits: data });
-              }
-          });
-          return true;
-      } catch (e) {
-          console.warn("Error deducting credits:", e);
-          return true; // Keep optimistic update, real-time will correct if needed
-      }
-  },
-
   addCredits: async (userId: string, amount: number): Promise<boolean> => {
       if (!isSupabaseConfigured()) return false;
       try {
@@ -1032,12 +999,6 @@ export const storageService = {
       } catch {
           return false;
       }
-  },
-  
-  deductCreditOrUsage: async (userId: string) => {
-      const success = await storageService.consumeCredit(userId);
-      if (success) return storageService.getLocalUser();
-      return null;
   },
   
   canPerformRequest: async (userId: string) => {

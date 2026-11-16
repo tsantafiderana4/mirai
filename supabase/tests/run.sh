@@ -13,5 +13,8 @@ $PSQL -d $DB -f 10_attack_scenarios.sql
 $PSQL -d $DB -f ../migrations/20261116000000_security_hardening.sql >/dev/null
 echo "=== APRÈS la migration ==="
 $PSQL -d $DB -f 10_attack_scenarios.sql
+$PSQL -d $DB -f ../migrations/20261117000000_ai_rate_limits.sql >/dev/null
+echo "=== Limite de débit IA ==="
+$PSQL -d $DB -f 20_rate_limit.sql
 echo "=== Clés migrées de system_settings vers api_keys ==="
 $PSQL -d $DB -c "SELECT key_value FROM public.api_keys ORDER BY 1" -c "SELECT admin_contact FROM public.system_settings"

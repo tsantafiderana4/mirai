@@ -290,16 +290,10 @@ const AppContent: React.FC = () => {
 
       setIsGeneratingExercise(true);
       try {
+          // Le serveur débite 5 crédits (remboursés si la génération échoue)
           const exercises = await generateExerciseFromHistory(currentSession.messages, user);
           if (exercises.length > 0) {
-              const { data: newCredits, error } = await supabase.rpc('consume_credits', { p_amount: 5, p_user_id: user.id });
-              if (error) {
-                  console.error("Failed to consume credits", error);
-              } else if (newCredits !== null) {
-                  setUser({ ...user, credits: newCredits });
-                  toast.info("-5 Crédits pour la génération d'exercices.");
-              }
-              
+              toast.info("-5 Crédits pour la génération d'exercices.");
               setCurrentExercises(exercises);
               setActiveMode('exercise');
           } else {

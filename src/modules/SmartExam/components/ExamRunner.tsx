@@ -363,7 +363,7 @@ const ExamRunner: React.FC<Props> = ({ exam, onFinish, onCancel }) => {
             // Race between Gemini TTS and 30s timeout
             const TIMEOUT_MS = 30000;
             const pcmBuffer = await Promise.race([
-                generateSpeech(text),
+                generateSpeech(text, 'Kore', 'tts_exam'),
                 new Promise<null>((resolve) => setTimeout(() => resolve(null), TIMEOUT_MS))
             ]);
 
