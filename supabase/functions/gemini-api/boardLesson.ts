@@ -4,7 +4,7 @@
 // Gemini, validation/nettoyage des leçons, encodage audio WAV.
 //
 // Les types ci-dessous sont dupliqués côté client dans
-// src/types/board.ts : garder les deux fichiers alignés.
+// src/components/Board/types.ts : garder les deux fichiers alignés.
 // =====================================================================
 
 export const BOARD_LESSON_VERSION = 'v1'
