@@ -1,6 +1,6 @@
 import { callAI } from './aiClient';
 import { supabase } from '../lib/supabase';
-import type { BoardAnswer, BoardLesson, BoardSyllabus, BoardVoiceMode } from '../components/Board/types';
+import type { BoardAnswer, BoardLesson, BoardLessonReport, BoardSyllabus, BoardVoiceMode, ReviewWord } from '../components/Board/types';
 
 /**
  * Service « Leçon au tableau ». Toute la génération et la facturation se
@@ -31,8 +31,10 @@ export const boardService = {
      * 2. Sinon : le serveur renvoie une URL signée (MP3 en cache côté
      *    Supabase) ou l'audio en base64 ; on le garde ensuite sur le téléphone.
      */
-    async getStepAudio(lessonId: string, stepIndex: number, voiceName?: string): Promise<string> {
-        const cacheKey = audioCacheKey(lessonId, stepIndex, voiceName || 'Kore');
+    async getStepAudio(lessonId: string, stepIndex: number, voiceName?: string, say = ''): Promise<string> {
+        // Le texte parlé fait partie de la clé : une étape corrigée par l'admin
+        // n'est jamais rejouée avec l'ancienne voix gardée sur le téléphone.
+        const cacheKey = audioCacheKey(lessonId, stepIndex, voiceName || 'Kore', say);
         const cached = await readCachedAudio(cacheKey);
         if (cached) return URL.createObjectURL(cached);
 
@@ -74,6 +76,113 @@ export const boardService = {
             .eq('lesson_id', lessonId)
             .eq('user_id', userId);
     },
+
+    // --- Mini-test -------------------------------------------------------
+    /** Enregistre le score (0-100) ; renvoie le meilleur score de l'élève. */
+    async saveTestScore(lessonId: string, score: number): Promise<number | null> {
+        const { data, error } = await supabase.rpc('board_save_test_score', { p_lesson_id: lessonId, p_score: Math.round(score) });
+        if (error) throw error;
+        return data as number | null;
+    },
+
+    // --- « Mes mots » (révision espacée) -------------------------------------
+    /** Ajoute le vocabulaire de la leçon (lu côté serveur) ; renvoie le nombre de mots ajoutés. */
+    async addLessonWords(lessonId: string): Promise<number> {
+        const { data, error } = await supabase.rpc('board_words_add', { p_lesson_id: lessonId });
+        if (error) throw error;
+        return (data as number) ?? 0;
+    },
+
+    /** Nombre de mots à revoir maintenant et nombre total, pour une langue. */
+    async wordStats(language: string): Promise<{ due: number; total: number }> {
+        const lang = languageName(language);
+        const [due, total] = await Promise.all([
+            supabase.from('board_word_reviews').select('id', { count: 'exact', head: true }).eq('language', lang).lte('due_at', new Date().toISOString()),
+            supabase.from('board_word_reviews').select('id', { count: 'exact', head: true }).eq('language', lang),
+        ]);
+        if (due.error) throw due.error;
+        if (total.error) throw total.error;
+        return { due: due.count ?? 0, total: total.count ?? 0 };
+    },
+
+    /** Mots à revoir (les plus en retard d'abord). */
+    async dueWords(language: string, limit = 20): Promise<ReviewWord[]> {
+        const { data, error } = await supabase.from('board_word_reviews')
+            .select('id, language, target, phonetic, fr, mg, box, due_at')
+            .eq('language', languageName(language))
+            .lte('due_at', new Date().toISOString())
+            .order('due_at', { ascending: true })
+            .limit(limit);
+        if (error) throw error;
+        return (data ?? []) as ReviewWord[];
+    },
+
+    /** Prochaine date de révision (quand rien n'est à revoir). */
+    async nextDueAt(language: string): Promise<string | null> {
+        const { data } = await supabase.from('board_word_reviews')
+            .select('due_at').eq('language', languageName(language))
+            .order('due_at', { ascending: true }).limit(1).maybeSingle();
+        return (data?.due_at as string | undefined) ?? null;
+    },
+
+    async reviewWord(id: string, known: boolean) {
+        const { error } = await supabase.rpc('board_word_review', { p_id: id, p_known: known });
+        if (error) throw error;
+    },
+
+    // --- Signalements ------------------------------------------------------
+    async report(lessonId: string, stepIndex: number | null, message: string) {
+        const { error } = await supabase.rpc('board_report', { p_lesson_id: lessonId, p_step_index: stepIndex, p_message: message });
+        if (error) throw error;
+    },
+
+    // --- Administration (réservé à l'admin, vérifié côté serveur) ---------
+    admin: {
+        async listLessons() {
+            const { data, error } = await supabase.from('board_lessons')
+                .select('id, language, level, lesson_number, title, created_at')
+                .order('language').order('level').order('lesson_number');
+            if (error) throw error;
+            return (data ?? []) as { id: string; language: string; level: string; lesson_number: number; title: string; created_at: string }[];
+        },
+
+        async loadLesson(id: string): Promise<BoardLesson> {
+            const { data, error } = await supabase.from('board_lessons')
+                .select('id, language, level, lesson_number, content').eq('id', id).single();
+            if (error) throw error;
+            return { id: data.id, language: data.language, level: data.level, number: data.lesson_number, ...(data.content as Omit<BoardLesson, 'id' | 'language' | 'level' | 'number'>) };
+        },
+
+        async listReports(status: 'open' | 'resolved' = 'open'): Promise<BoardLessonReport[]> {
+            const { data, error } = await supabase.from('board_lesson_reports')
+                .select('id, lesson_id, step_index, message, status, created_at, board_lessons(title, language, level, lesson_number)')
+                .eq('status', status)
+                .order('created_at', { ascending: false })
+                .limit(100);
+            if (error) throw error;
+            return (data ?? []) as unknown as BoardLessonReport[];
+        },
+
+        async resolveReport(id: string) {
+            const { error } = await supabase.from('board_lesson_reports')
+                .update({ status: 'resolved', resolved_at: new Date().toISOString() }).eq('id', id);
+            if (error) throw error;
+        },
+
+        /** Enregistre une leçon corrigée (validée côté serveur, audio modifié supprimé). */
+        save(lesson: BoardLesson) {
+            const content = {
+                title: lesson.title, titleMg: lesson.titleMg, objective: lesson.objective, objectiveMg: lesson.objectiveMg,
+                steps: lesson.steps, summary: lesson.summary, summaryMg: lesson.summaryMg,
+            };
+            return callAI<{ lesson: BoardLesson; removedAudio: number }>('board_admin_save', { lessonId: lesson.id, content });
+        },
+
+        /** Fait réécrire entièrement la leçon par Gemini (quota texte, pas de crédits). */
+        regenerate(lessonId: string) {
+            return callAI<{ lesson: BoardLesson; removedAudio: number }>('board_admin_regenerate', { lessonId });
+        },
+    },
 };
 
 export function base64ToBlob(b64: string, mime: string): Blob {
@@ -88,8 +197,18 @@ export function base64ToBlob(b64: string, mime: string): Blob {
 const AUDIO_CACHE = 'tm-board-audio-v1';
 const AUDIO_CACHE_MAX_ENTRIES = 400;
 
-const audioCacheKey = (lessonId: string, stepIndex: number, voice: string) =>
-    `/__board-audio__/${lessonId}/${stepIndex}-${voice}`;
+/** Empreinte courte d'un texte (FNV-1a 32 bits). */
+export function textHash(text: string): string {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(36);
+}
+
+const audioCacheKey = (lessonId: string, stepIndex: number, voice: string, say: string) =>
+    `/__board-audio__/${lessonId}/${stepIndex}-${voice}-${textHash(say)}`;
 
 async function readCachedAudio(key: string): Promise<Blob | null> {
     try {

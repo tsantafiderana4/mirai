@@ -63,12 +63,12 @@ export function useBoardPlayer({ lesson, voiceMode, voiceName, onVoiceFallback }
     const fetchAudio = useCallback((i: number) => {
         let p = audioUrls.current.get(i);
         if (!p) {
-            p = boardService.getStepAudio(lesson.id, i, voiceName);
+            p = boardService.getStepAudio(lesson.id, i, voiceName, lesson.steps[i]?.say ?? '');
             p.catch(() => audioUrls.current.delete(i));
             audioUrls.current.set(i, p);
         }
         return p;
-    }, [lesson.id, voiceName]);
+    }, [lesson.id, lesson.steps, voiceName]);
 
     const finishStep = useCallback((token: number) => {
         if (token !== runToken.current) return;

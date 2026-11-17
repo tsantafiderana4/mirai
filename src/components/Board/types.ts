@@ -73,3 +73,26 @@ export type BoardVoiceMode = 'premium' | 'device' | 'off';
  * malagasy), « first » (malagasy en grand, français en petit).
  */
 export type MgMode = 'off' | 'with' | 'first';
+
+/** Mot de « Mes mots » (révision espacée, boîtes de Leitner 1 à 5). */
+export interface ReviewWord {
+  id: string;
+  language: string;
+  target: string;
+  phonetic?: string | null;
+  fr?: string | null;
+  mg?: string | null;
+  box: number;
+  due_at: string;
+}
+
+/** Signalement d'erreur envoyé par un élève (vu par l'admin). */
+export interface BoardLessonReport {
+  id: string;
+  lesson_id: string;
+  step_index: number | null;
+  message: string;
+  status: 'open' | 'resolved';
+  created_at: string;
+  board_lessons?: { title: string; language: string; level: string; lesson_number: number } | null;
+}

@@ -85,11 +85,11 @@ export const Bilingual: React.FC<{
     );
 };
 
-const Chalk: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
+export const Chalk: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
     <span className={`font-chalk text-white [text-shadow:0_0_1px_rgba(255,255,255,0.35)] ${className}`}>{children}</span>
 );
 
-const SpeakButton: React.FC<{ text: string; language: string }> = ({ text, language }) => {
+export const SpeakButton: React.FC<{ text: string; language: string }> = ({ text, language }) => {
     const { t } = useTranslation();
     return (
         <button

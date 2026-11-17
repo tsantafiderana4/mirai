@@ -3,10 +3,16 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
     X, Play, Pause, SkipBack, SkipForward, RotateCcw, MessageCircleQuestion, Lock, CheckCircle2,
     Loader2, Send, Volume2, VolumeX, Smartphone, Sparkles, ChevronRight, Subtitles, MessageSquareOff, Trophy, BookOpen,
+    Flag, Target, Layers,
 } from 'lucide-react';
 import type { BoardAnswer, BoardLesson, BoardSyllabus, BoardVoiceMode, MgMode, SyllabusLesson } from './types';
 import { BoardItemView, MgLine, Bilingual } from './BoardItemView';
 import { useBoardPlayer } from './useBoardPlayer';
+import { Slate } from './Slate';
+import MiniTestView from './MiniTestView';
+import ReviewView from './ReviewView';
+import ReportSheet from './ReportSheet';
+import { buildMiniTest } from './miniTest';
 import { boardService, loadVoiceMode, saveVoiceMode, languageName } from '../../services/boardService';
 import { AIError } from '../../services/aiClient';
 import { useTranslation } from '../../contexts/LanguageContext';
@@ -31,15 +37,6 @@ const NEXT_MG_MODE: Record<MgMode, MgMode> = { with: 'first', first: 'off', off:
 const SUB_KEY = 'tm_board_subtitles';
 const readFlag = (k: string, def: boolean) => { try { const v = localStorage.getItem(k); return v === null ? def : v === '1'; } catch { return def; } };
 const writeFlag = (k: string, v: boolean) => { try { localStorage.setItem(k, v ? '1' : '0'); } catch { /* ignore */ } };
-
-/** Fond « ardoise » réutilisé par toutes les vues. */
-const Slate: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
-    <div className={`relative flex flex-col overflow-hidden rounded-[1.75rem] bg-[#0f1d18] shadow-[inset_0_0_80px_rgba(0,0,0,0.55),0_30px_60px_-30px_rgba(0,0,0,0.8)] ring-1 ring-white/10 ${className}`}>
-        <div className="pointer-events-none absolute inset-0 opacity-[0.07] [background-image:radial-gradient(rgba(255,255,255,0.9)_0.6px,transparent_0.6px)] [background-size:3px_3px]" />
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(52,211,153,0.10),transparent_60%)]" />
-        <div className="relative flex min-h-0 flex-1 flex-col">{children}</div>
-    </div>
-);
 
 const TeacherAvatar: React.FC<{ speaking: boolean }> = ({ speaking }) => (
     <div className="relative h-11 w-11 shrink-0">
@@ -109,6 +106,27 @@ const SyllabusView: React.FC<{
     );
 };
 
+/** Carte « Mes mots » en tête du programme (révision espacée). */
+const WordsCard: React.FC<{ stats: { due: number; total: number } | null; onOpen: () => void }> = ({ stats, onOpen }) => {
+    const { t } = useTranslation();
+    if (!stats || stats.total === 0) return null;
+    const due = stats.due > 0;
+    return (
+        <button onClick={onOpen} className={`mb-4 flex w-full items-center gap-4 rounded-2xl p-4 text-left ring-1 transition active:scale-[0.99] ${due ? 'bg-amber-300/15 ring-amber-300/40 hover:bg-amber-300/20' : 'bg-white/[0.04] ring-white/10 hover:bg-white/[0.08]'}`}>
+            <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${due ? 'bg-amber-300 text-amber-950' : 'bg-white/10 text-white'}`}>
+                <Layers className="h-6 w-6" />
+            </span>
+            <span className="min-w-0 flex-1">
+                <span className="block font-semibold text-white">{t('board.words_title')}</span>
+                <span className={`block text-sm ${due ? 'text-amber-200' : 'text-slate-400'}`}>
+                    {due ? t('board.words_due', { n: stats.due }) : t('board.words_none_due')} · {t('board.words_total', { n: stats.total })}
+                </span>
+            </span>
+            <ChevronRight className="h-5 w-5 text-white/50" />
+        </button>
+    );
+};
+
 // ---------------------------------------------------------------------
 // Vue 2 : préparation (première génération ≈ 30-60 s)
 // ---------------------------------------------------------------------
@@ -138,8 +156,8 @@ const PreparingView: React.FC = () => {
 // ---------------------------------------------------------------------
 const AskSheet: React.FC<{
     language: string; mgMode: MgMode; busy: boolean; answer: BoardAnswer | null; answerSpeaking: boolean;
-    onSend: (q: string) => void; onClose: () => void; onReplayAnswer: () => void;
-}> = ({ language, mgMode, busy, answer, answerSpeaking, onSend, onClose, onReplayAnswer }) => {
+    onSend: (q: string) => void; onClose: () => void; onReplayAnswer: () => void; onReport: () => void;
+}> = ({ language, mgMode, busy, answer, answerSpeaking, onSend, onClose, onReplayAnswer, onReport }) => {
     const { t } = useTranslation();
     const [q, setQ] = useState('');
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -174,7 +192,14 @@ const AskSheet: React.FC<{
                                 {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
                             </button>
                         </form>
-                        <p className="mt-2 text-xs text-slate-500">{busy ? t('board.thinking') : t('board.ask_cost')}</p>
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                            <p className="text-xs text-slate-500">{busy ? t('board.thinking') : t('board.ask_cost')}</p>
+                            {!busy && (
+                                <button type="button" onClick={onReport} className="flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs font-semibold text-rose-200/90 hover:bg-white/10">
+                                    <Flag className="h-3.5 w-3.5" /> {t('board.report')}
+                                </button>
+                            )}
+                        </div>
                     </>
                 ) : (
                     <>
@@ -218,6 +243,7 @@ const LessonView: React.FC<{
     const answerAudio = useRef<HTMLAudioElement | null>(null);
     const answerUrl = useRef<string | undefined>(undefined);
     const resumeAfterAsk = useRef(false);
+    const [reporting, setReporting] = useState(false);
 
     useEffect(() => { if (player.phase === 'finished') onFinished(); }, [player.phase, onFinished]);
 
@@ -379,7 +405,14 @@ const LessonView: React.FC<{
                     <AskSheet
                         language={lesson.language} mgMode={mgMode} busy={askBusy} answer={answer}
                         answerSpeaking={answerSpeaking} onSend={send} onClose={closeAsk} onReplayAnswer={playAnswer}
+                        onReport={() => { setAsking(false); setTimeout(() => setReporting(true), 250); }}
                     />
+                )}
+            </AnimatePresence>
+            <AnimatePresence>
+                {reporting && (
+                    <ReportSheet lessonId={lesson.id} stepIndex={started ? player.stepIndex : null} notify={notify}
+                        onClose={() => { setReporting(false); if (resumeAfterAsk.current) player.resume(); }} />
                 )}
             </AnimatePresence>
         </div>
@@ -389,7 +422,10 @@ const LessonView: React.FC<{
 // ---------------------------------------------------------------------
 // Vue 4 : résumé de fin de leçon
 // ---------------------------------------------------------------------
-const SummaryView: React.FC<{ lesson: BoardLesson; mgMode: MgMode; hasNext: boolean; onNext: () => void; onList: () => void; onReplay: () => void }> = ({ lesson, mgMode, hasNext, onNext, onList, onReplay }) => {
+const SummaryView: React.FC<{
+    lesson: BoardLesson; mgMode: MgMode; hasNext: boolean; testCount: number; wordsAdded: number;
+    onNext: () => void; onList: () => void; onReplay: () => void; onTest: () => void; onReport: () => void;
+}> = ({ lesson, mgMode, hasNext, testCount, wordsAdded, onNext, onList, onReplay, onTest, onReport }) => {
     const { t } = useTranslation();
     return (
         <Slate>
@@ -415,15 +451,31 @@ const SummaryView: React.FC<{ lesson: BoardLesson; mgMode: MgMode; hasNext: bool
                         </ul>
                     </div>
                 )}
-                <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                {wordsAdded > 0 && (
+                    <p className="mt-6 flex items-center gap-2 text-sm text-amber-200"><Layers className="h-4 w-4" /> {t('board.words_added', { n: wordsAdded })}</p>
+                )}
+                {testCount > 0 && (
+                    <button onClick={onTest} className="mt-6 flex w-full items-center gap-4 rounded-2xl bg-amber-300 p-4 text-left text-amber-950 shadow-[0_10px_30px_-12px_rgba(252,211,77,0.9)] transition active:scale-[0.99]">
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-950/10"><Target className="h-6 w-6" /></span>
+                        <span className="min-w-0 flex-1">
+                            <span className="block text-base font-extrabold">{t('board.test_cta', { n: testCount })}</span>
+                            <span className="block text-sm opacity-80">{t('board.test_cta_hint')}</span>
+                        </span>
+                        <ChevronRight className="h-5 w-5" />
+                    </button>
+                )}
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
                     {hasNext && (
-                        <button onClick={onNext} className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-400 py-3.5 text-base font-extrabold text-emerald-950 active:scale-[0.99]">
+                        <button onClick={onNext} className={`flex flex-1 items-center justify-center gap-2 rounded-2xl py-3.5 text-base font-extrabold active:scale-[0.99] ${testCount > 0 ? 'bg-white/[0.06] text-white ring-1 ring-white/10' : 'bg-emerald-400 text-emerald-950'}`}>
                             {t('board.next_lesson')} <ChevronRight className="h-5 w-5" />
                         </button>
                     )}
                     <button onClick={onReplay} className="flex items-center justify-center gap-2 rounded-2xl bg-white/[0.06] px-5 py-3.5 font-bold text-white ring-1 ring-white/10"><RotateCcw className="h-4 w-4" /> {t('board.replay_lesson')}</button>
                     <button onClick={onList} className="flex items-center justify-center gap-2 rounded-2xl bg-white/[0.06] px-5 py-3.5 font-bold text-white ring-1 ring-white/10"><BookOpen className="h-4 w-4" /> {t('board.back_to_list')}</button>
                 </div>
+                <button onClick={onReport} className="mt-5 flex items-center gap-1.5 text-sm font-semibold text-rose-200/80 hover:text-rose-200">
+                    <Flag className="h-4 w-4" /> {t('board.report')}
+                </button>
             </div>
         </Slate>
     );
@@ -432,7 +484,7 @@ const SummaryView: React.FC<{ lesson: BoardLesson; mgMode: MgMode; hasNext: bool
 // ---------------------------------------------------------------------
 // Écran complet
 // ---------------------------------------------------------------------
-type View = 'syllabus' | 'preparing' | 'lesson' | 'summary';
+type View = 'syllabus' | 'preparing' | 'lesson' | 'summary' | 'test' | 'review';
 
 const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPayment, notify }) => {
     const { t } = useTranslation();
@@ -448,6 +500,13 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
     const [mgMode, setMgMode] = useState<MgMode>(() => readMgMode(prefersMg ? 'first' : 'with'));
     const [subtitles, setSubtitles] = useState(() => readFlag(SUB_KEY, true));
     const [voiceMode, setVoiceMode] = useState<BoardVoiceMode>(loadVoiceMode);
+    const [wordStats, setWordStats] = useState<{ due: number; total: number } | null>(null);
+    const [wordsAdded, setWordsAdded] = useState(0);
+    const [reportingSummary, setReportingSummary] = useState(false);
+    const refreshWords = useCallback(() => {
+        boardService.wordStats(language).then(setWordStats).catch(() => {});
+    }, [language]);
+    useEffect(() => { refreshWords(); }, [refreshWords]);
 
     // Chargement du programme. NB : `t` n'est pas mémorisé par LanguageContext,
     // il ne doit donc pas figurer dans les dépendances (sinon boucle infinie).
@@ -484,9 +543,15 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
     const onFinished = useCallback(() => {
         if (!lesson) return;
         setView('summary');
+        setWordsAdded(0);
         if (user) boardService.markCompleted(lesson.id, user.id).catch(() => {});
+        // Le vocabulaire de la leçon rejoint « Mes mots » (révision espacée)
+        boardService.addLessonWords(lesson.id).then(n => { setWordsAdded(n); refreshWords(); }).catch(() => {});
         setSyllabus(s => s && { ...s, lessons: s.lessons.map(x => x.number === lesson.number ? { ...x, completed: true, unlocked: true } : x) });
-    }, [lesson, user]);
+    }, [lesson, user, refreshWords]);
+
+    const testCount = useMemo(() => (lesson ? buildMiniTest(lesson).length : 0), [lesson]);
+    const backToList = () => { setView('syllabus'); refreshWords(); };
 
     const nextEntry = useMemo(() => lesson && syllabus?.lessons.find(l => l.number === lesson.number + 1), [lesson, syllabus]);
 
@@ -510,14 +575,16 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
         <div className="fixed inset-0 z-[300] flex flex-col bg-gradient-to-b from-[#07110e] to-[#0b1512] text-white">
             {/* Barre du haut */}
             <header className="flex items-center gap-3 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-6">
-                <button onClick={view === 'lesson' || view === 'summary' ? () => setView('syllabus') : onClose} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/10" aria-label={t('common.close')}>
+                <button onClick={view === 'syllabus' || view === 'preparing' ? onClose : backToList} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/10" aria-label={t('common.close')}>
                     <X className="h-5 w-5" />
                 </button>
                 <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-1.5 truncate whitespace-nowrap text-[0.7rem] font-bold uppercase tracking-[0.18em] text-emerald-300">
                         <img src={getFlagUrl(language)} alt="" className="h-3 w-4 rounded-sm object-cover" /> {languageName(language)} · {level}
                     </p>
-                    <h1 className="truncate text-base font-bold sm:text-lg">{view === 'lesson' && lesson ? lesson.title : t('board.title')}</h1>
+                    <h1 className="truncate text-base font-bold sm:text-lg">
+                        {view === 'lesson' && lesson ? lesson.title : view === 'test' ? t('board.test_title') : view === 'review' ? t('board.words_title') : t('board.title')}
+                    </h1>
                 </div>
                 <button
                     onClick={cycleMg}
@@ -539,13 +606,14 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
                 )}
             </header>
 
-            <main className={`mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6 ${view === 'lesson' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+            <main className={`mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6 ${view === 'lesson' || view === 'test' || view === 'review' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
                 {view === 'syllabus' && (
                     <>
                         <div className="mb-5 mt-1">
                             <h2 className="font-chalk text-3xl text-white">{t('board.program_title')}</h2>
                             <p className="mt-1 text-sm text-slate-400">{t('board.program_subtitle')}</p>
                         </div>
+                        <WordsCard stats={wordStats} onOpen={() => setView('review')} />
                         <SyllabusView syllabus={syllabus} error={syllabusError?.startsWith('board.') ? t(syllabusError) : syllabusError} mgMode={mgMode} onOpen={requestOpen} onRetry={loadSyllabus} />
                     </>
                 )}
@@ -559,13 +627,32 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
                 )}
                 {view === 'summary' && lesson && (
                     <SummaryView
-                        lesson={lesson} mgMode={mgMode} hasNext={!!nextEntry}
+                        lesson={lesson} mgMode={mgMode} hasNext={!!nextEntry} testCount={testCount} wordsAdded={wordsAdded}
                         onNext={() => nextEntry && requestOpen(nextEntry)}
-                        onList={() => setView('syllabus')}
+                        onList={backToList}
                         onReplay={() => { setLessonRun(r => r + 1); setView('lesson'); }}
+                        onTest={() => setView('test')}
+                        onReport={() => setReportingSummary(true)}
                     />
                 )}
+                {view === 'test' && lesson && (
+                    <MiniTestView
+                        key={lesson.id} lesson={lesson} mgMode={mgMode} hasNext={!!nextEntry}
+                        onNext={() => nextEntry && requestOpen(nextEntry)}
+                        onReviewLesson={() => { setLessonRun(r => r + 1); setView('lesson'); }}
+                        onList={backToList}
+                    />
+                )}
+                {view === 'review' && (
+                    <ReviewView language={language} mgMode={mgMode} onBack={backToList} />
+                )}
             </main>
+
+            <AnimatePresence>
+                {reportingSummary && lesson && (
+                    <ReportSheet lessonId={lesson.id} stepIndex={null} notify={notify} onClose={() => setReportingSummary(false)} />
+                )}
+            </AnimatePresence>
 
             {/* Confirmation de déblocage */}
             <AnimatePresence>

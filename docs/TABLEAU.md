@@ -21,7 +21,17 @@ Un professeur IA explique une leçon au tableau, étape par étape : il **parle 
    - choix de la voix : *premium* (Gemini), *téléphone* (gratuite, économise la data) ou *muet*.
 4. **« Avereno » (Répète après moi)** : sur le vocabulaire et les phrases, l'élève appuie, prononce, et le téléphone note sa prononciation en % en soulignant les mots manqués. Le professeur se met en pause pendant l'exercice. La reconnaissance vocale est celle du téléphone : gratuite, sans aucun appel à Gemini. Elle fonctionne sur Chrome Android et n'est pas disponible sur certains navigateurs (le bouton est alors masqué).
 5. **Question** : l'élève peut interrompre à tout moment (1 crédit). Le professeur répond à l'oral et écrit au tableau. Des raccourcis sont proposés : « Avereno azafady », « Hazavao amin'ny fomba hafa », « Omeo ohatra hafa aho ».
-6. **Fin** : l'écran « À retenir » (français + malagasy), puis la leçon suivante.
+6. **Fin** : l'écran « À retenir » (français + malagasy). Le vocabulaire de la leçon rejoint « Mes mots ».
+7. **Mini-test** (gratuit, sans Gemini) : 5 questions variées construites à partir de la leçon :
+   - sens d'un mot ;
+   - choisir la bonne traduction ;
+   - remettre une phrase dans l'ordre ;
+   - écrire le mot au clavier (langues à alphabet latin ; un accent ou une lettre près est accepté, avec une remarque) ;
+   - un quiz de la leçon.
+
+   Le score est enregistré (meilleur score gardé). En dessous de 50 %, l'app propose de revoir la leçon.
+8. **« Mes mots »** (révision espacée) : une carte en haut du programme indique les mots à revoir aujourd'hui. L'élève voit le mot (et peut l'écouter), se rappelle le sens, retourne la carte et se note : « Je savais » ou « À revoir ». Un mot connu revient après 1, 3, 7, 16 puis 35 jours ; un mot oublié revient en fin de séance et le lendemain.
+9. **« Signaler une erreur »** (gratuit, 10 par jour) : depuis la feuille « Poser une question » ou l'écran de fin. Le signalement indique l'étape concernée.
 
 Le quiz bloque l'enchaînement automatique tant que l'élève n'a pas répondu, mais il peut quand même passer à la suite avec « Suivant ».
 
@@ -56,6 +66,27 @@ Voix d'une étape ──▶ board_step_audio : TTS Gemini → MP3 16 kHz 24 kbit
   - seule une empreinte SHA-256 tronquée de la clé est stockée, jamais la clé ;
   - si toutes les clés sont en pause, l'élève est remboursé et reçoit un message clair, et la voix du téléphone prend le relais.
 
+## Correction des leçons (admin)
+
+Console admin, onglet **Leçons** :
+- **Signalements des élèves** : leçon, étape et message. **Corriger** ouvre la leçon à l'étape signalée ; **Résolu** clôt le signalement.
+- **Leçons générées** : toutes les leçons, filtrables (« Anglais A1 », un mot du titre…).
+- **Éditeur** : chaque texte est modifiable (français, malagasy, langue étudiée, mot à mot, tableaux, quiz). On peut aussi supprimer un élément ou une étape.
+  - **Enregistrer** : la leçon est validée par le serveur, puis corrigée pour tous les élèves. Seules les voix des étapes dont le texte parlé a changé sont supprimées ; elles se refont à la demande ou la nuit.
+  - **Régénérer** : Gemini réécrit toute la leçon. Cela consomme du quota texte, mais aucun crédit.
+- Les téléphones ne rejouent jamais une voix périmée : la clé du cache audio contient une empreinte du texte parlé.
+
+## Pré-génération nocturne des voix
+
+Une tâche planifiée (pg_cron + pg_net, inclus dans l'offre gratuite de Supabase) appelle la fonction toutes les 5 minutes, **de 2 h à 6 h 55, heure de Madagascar**. Chaque passage produit **une seule** voix manquante (voix Kore), en commençant par les leçons les plus suivies.
+
+Cet horaire précède la remise à zéro des quotas Gemini (minuit, heure du Pacifique, soit 10 h ou 11 h à Madagascar). La tâche utilise donc le quota de voix gratuit qui serait perdu, sans gêner les élèves de la journée. Dès qu'une clé est épuisée, elle est mise en pause et les passages suivants ne demandent plus rien à Google.
+
+- **Réglage** : `supabase/CRON_mirai.sql` (déjà exécuté sur mirai).
+- **Suspendre** : `SELECT cron.unschedule('board-pregen-audio');`
+- **Historique** : `SELECT status, return_message, start_time FROM cron.job_run_details ORDER BY start_time DESC LIMIT 10;`
+- **Sécurité** : l'appel est authentifié par un secret aléatoire stocké dans le schéma `private`, illisible par le navigateur et vérifié par la fonction (`cron_secret_ok`).
+
 ## Fichiers
 
 | Rôle | Fichier |
@@ -67,6 +98,13 @@ Voix d'une étape ──▶ board_step_audio : TTS Gemini → MP3 16 kHz 24 kbit
 | Pause des clés épuisées (serveur, testé) | `supabase/functions/gemini-api/keyRotation.ts` (+ `.test.ts`) |
 | Tables, règles d'accès, bucket audio | `supabase/migrations/20261118000000_board_lessons.sql`, `20261119000000_audio_mp3_key_rotation.sql` |
 | Note de prononciation « Avereno » (testé) | `src/components/Board/speechScore.ts` (+ `tests/client/speechScore.test.ts`) |
+| Accès Gemini partagé (clés, rotation, voix) | `supabase/functions/gemini-api/gemini.ts` |
+| Pré-génération et invalidation de l'audio (testé) | `supabase/functions/gemini-api/boardOps.ts` (+ `.test.ts`) |
+| Mini-test (testé) | `src/components/Board/miniTest.ts` (+ `tests/client/miniTest.test.ts`), `MiniTestView.tsx` |
+| « Mes mots » | `src/components/Board/ReviewView.tsx` |
+| Signaler une erreur | `src/components/Board/ReportSheet.tsx` |
+| Console admin « Leçons » | `src/components/Board/BoardAdminPanel.tsx` |
+| Tables et fonctions du lot 2, tests SQL | `supabase/migrations/20261120000000_board_lot2.sql`, `supabase/tests/40_board_lot2.sql`, `supabase/CRON_mirai.sql` |
 | Écran (programme, leçon, question, résumé) | `src/components/Board/BoardLessonScreen.tsx` |
 | Rendu des éléments du tableau | `src/components/Board/BoardItemView.tsx` |
 | Synchronisation voix / tableau | `src/components/Board/useBoardPlayer.ts` |
@@ -76,8 +114,9 @@ Voix d'une étape ──▶ board_step_audio : TTS Gemini → MP3 16 kHz 24 kbit
 ## Déploiement
 
 1. **Base** : les migrations sont déjà appliquées sur le projet Supabase `mirai`. Sur un autre projet, exécute `supabase/INSTALL_mirai.sql`.
-2. **Fonction** : `supabase functions deploy gemini-api`. Il faut déployer le dossier entier, avec `boardLesson.ts`, `pricing.ts`, `audio.ts` et `keyRotation.ts`.
-3. **Front** : redéployer. Le point d'entrée se trouve dans le menu du chat et sur une carte « Leçon au tableau » de l'écran d'accueil du chat.
+2. **Fonction** : `supabase functions deploy gemini-api`. Il faut déployer le dossier entier (`index.ts`, `gemini.ts`, `boardLesson.ts`, `boardOps.ts`, `pricing.ts`, `audio.ts`, `keyRotation.ts`).
+3. **Tâche de nuit** : exécuter `supabase/CRON_mirai.sql` une fois (adresse et clé anon du projet).
+4. **Front** : redéployer. Le point d'entrée se trouve dans le menu du chat et sur une carte « Leçon au tableau » de l'écran d'accueil du chat.
 
 ## À tester en vrai après déploiement
 
@@ -90,4 +129,4 @@ Voix d'une étape ──▶ board_step_audio : TTS Gemini → MP3 16 kHz 24 kbit
 
 - Brancher le même tableau sur l'appel vocal en direct (`LiveTeacher`), en corrigeant d'abord ses deux bugs : l'interruption qui ne coupe pas le son et le micro qui ne se coupe pas.
 - Laisser l'élève choisir une notion libre (« je veux une leçon sur le passé simple »).
-- Ajouter un bouton admin pour régénérer une leçon jugée mauvaise.
+- Leçons disponibles hors ligne, thème clair, taille du texte réglable (lot 3).

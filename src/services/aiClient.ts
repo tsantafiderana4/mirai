@@ -17,6 +17,8 @@ export type AIAction =
     | 'charge_voice_minute'
     | 'live_token'
     | 'board_syllabus'
+    | 'board_admin_save'
+    | 'board_admin_regenerate'
     | 'board_lesson_open'
     | 'board_step_audio'
     | 'board_question';

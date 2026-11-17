@@ -19,5 +19,9 @@ $PSQL -d $DB -f 20_rate_limit.sql
 $PSQL -d $DB -f ../migrations/20261118000000_board_lessons.sql >/dev/null
 echo "=== Leçon au tableau ==="
 $PSQL -d $DB -f 30_board_lessons.sql
+$PSQL -d $DB -f ../migrations/20261119000000_audio_mp3_key_rotation.sql >/dev/null
+$PSQL -d $DB -f ../migrations/20261120000000_board_lot2.sql >/dev/null
+echo "=== Lot 2 : mini-test, Mes mots, signalements, pré-génération ==="
+$PSQL -d $DB -f 40_board_lot2.sql
 echo "=== Clés migrées de system_settings vers api_keys ==="
 $PSQL -d $DB -c "SELECT key_value FROM public.api_keys ORDER BY 1" -c "SELECT admin_contact FROM public.system_settings"

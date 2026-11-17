@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { UserProfile, SystemSettings } from '../types';
-import { Users, CreditCard, Settings, Search, Save, MessageSquare, Plus, Minus, RefreshCw, Banknote, Shield, Loader2, Trash2, CheckCircle, X, Info, Activity } from 'lucide-react';
+import { Users, CreditCard, Settings, Search, Save, MessageSquare, Plus, Minus, RefreshCw, Banknote, Shield, Loader2, Trash2, CheckCircle, X, Info, Activity, Presentation } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAdmin } from '../hooks/queries/useAdmin';
+import BoardAdminPanel from './Board/BoardAdminPanel';
 
 interface AdminDashboardProps {
   currentUser: UserProfile;
@@ -14,7 +15,7 @@ interface AdminDashboardProps {
 }
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notify }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'requests' | 'coupons' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'requests' | 'coupons' | 'lessons' | 'settings'>('overview');
   const [search, setSearch] = useState('');
   
   const { users, requests, settings: fetchedSettings, coupons, isLoading, updateSettings, updateUser, updateUserAuth, addCredits, resolveRequest, addCoupon, removeCoupon, refetchAll } = useAdmin();
@@ -235,8 +236,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onBack, notif
             <Tab active={activeTab === 'users'} onClick={() => setActiveTab('users')} icon={<Users className="w-4 h-4"/>} label="Utilisateurs" />
             <Tab active={activeTab === 'requests'} onClick={() => setActiveTab('requests')} icon={<MessageSquare className="w-4 h-4"/>} label="Demandes" count={pendingRequestsCount} />
             <Tab active={activeTab === 'coupons'} onClick={() => setActiveTab('coupons')} icon={<Banknote className="w-4 h-4"/>} label="Coupons" />
+            <Tab active={activeTab === 'lessons'} onClick={() => setActiveTab('lessons')} icon={<Presentation className="w-4 h-4"/>} label="Leçons" />
             <Tab active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings className="w-4 h-4"/>} label="Système" />
         </div>
+
+        {/* LEÇONS AU TABLEAU : signalements et corrections */}
+        {activeTab === 'lessons' && <BoardAdminPanel notify={notify} />}
 
         {/* OVERVIEW TAB */}
         {activeTab === 'overview' && (

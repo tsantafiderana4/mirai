@@ -3,7 +3,9 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.3
 import { priceRequest, RATE_LIMIT_MESSAGES, BOARD_LESSON_COST } from './pricing.ts'
 import * as Board from './boardLesson.ts'
 import * as Rot from './keyRotation.ts'
-import { encodeTeacherAudio } from './audio.ts'
+import { encodeTeacherAudio, type EncodedAudio } from './audio.ts'
+import { createGeminiClient, loadGeminiKeys, teacherVoice, TTS_CHAIN, type GeminiClient } from './gemini.ts'
+import { audioFilesForSteps, changedSpokenSteps, firstMissingStep, PREGEN_VOICE } from './boardOps.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -17,6 +19,72 @@ const json = (body: unknown, status = 200) =>
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Produit la voix d'une étape (MP3), la range dans le bucket et renvoie une URL signée. */
+async function storeStepAudio(
+  db: SupabaseClient, gemini: GeminiClient, lessonId: string, i: number, voice: string, say: string,
+): Promise<{ audio: EncodedAudio; url?: string }> {
+  const audio = encodeTeacherAudio(await teacherVoice(gemini, say, voice))
+  const bucket = db.storage.from('lesson-audio')
+  const path = `${lessonId}/${i}-${voice}.${audio.ext}`
+  const { error } = await bucket.upload(path, new Blob([audio.bytes], { type: audio.mime }), { contentType: audio.mime, upsert: true })
+  if (error) {
+    console.warn('[Board] Stockage audio indisponible :', error.message)
+    return { audio }
+  }
+  const signed = await bucket.createSignedUrl(path, 3600)
+  return { audio, url: signed.data?.signedUrl }
+}
+
+/** Supprime l'audio stocké des étapes données (après une correction admin). */
+async function purgeStepAudio(db: SupabaseClient, lessonId: string, steps: number[] | 'all'): Promise<number> {
+  const bucket = db.storage.from('lesson-audio')
+  const { data: files } = await bucket.list(lessonId, { limit: 500 })
+  const names = audioFilesForSteps((files ?? []).map(f => f.name), steps)
+  if (!names.length) return 0
+  const { error } = await bucket.remove(names.map(n => `${lessonId}/${n}`))
+  if (error) console.warn('[Board] Suppression audio impossible :', error.message)
+  return error ? 0 : names.length
+}
+
+/**
+ * Tâche de nuit (pg_cron) : produit UNE voix manquante, en commençant par
+ * les leçons les plus suivies. Elle consomme le quota TTS gratuit restant
+ * avant sa remise à zéro ; dès qu'une clé est épuisée, elle est en pause et
+ * les appels suivants s'arrêtent sans rien demander à Google.
+ */
+async function runNightlyPregen(db: SupabaseClient, secret: string | null): Promise<Response> {
+  const { data: ok } = await db.rpc('cron_secret_ok', { p_secret: secret ?? '' })
+  if (ok !== true) return json({ error: 'Non autorisé.' }, 401)
+
+  const keys = await loadGeminiKeys(db)
+  if (!keys.length) return json({ skipped: 'no_keys' })
+  const gemini = await createGeminiClient(db, keys)
+  if (gemini.allPaused(TTS_CHAIN)) return json({ skipped: 'quota' })
+
+  const { data: candidates, error } = await db.rpc('board_pregen_candidates', { p_limit: 40 })
+  if (error) throw new Error(error.message)
+  const bucket = db.storage.from('lesson-audio')
+  for (const c of (candidates ?? []) as { lesson_id: string; step_count: number }[]) {
+    const { data: files } = await bucket.list(c.lesson_id, { limit: 500 })
+    const i = firstMissingStep(c.step_count, (files ?? []).map(f => f.name), PREGEN_VOICE)
+    if (i < 0) continue
+    const { data: row } = await db.from('board_lessons').select('content').eq('id', c.lesson_id).single()
+    const say = (row?.content as Board.BoardLessonContent | undefined)?.steps?.[i]?.say
+    if (!say) continue
+    try {
+      await storeStepAudio(db, gemini, c.lesson_id, i, PREGEN_VOICE, say)
+    } catch (e) {
+      if (e instanceof Rot.QuotaExhaustedError) return json({ skipped: 'quota' })
+      throw e
+    }
+    console.log(`[Pregen] Voix prête : leçon ${c.lesson_id}, étape ${i}`)
+    return json({ generated: { lessonId: c.lesson_id, step: i } })
+  }
+  return json({ done: true })
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -44,6 +112,16 @@ Deno.serve(async (req) => {
       return json({ status: 'ok' })
     }
 
+    // Client "serveur" : clés API, écritures des leçons, remboursements.
+    adminClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false },
+    })
+
+    // Tâche planifiée (pas d'utilisateur) : authentifiée par un secret partagé
+    if (action === 'cron_pregen_audio') {
+      return await runNightlyPregen(adminClient, req.headers.get('x-cron-secret'))
+    }
+
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
       return json({ error: 'Non autorisé. Token manquant.' }, 401)
@@ -53,11 +131,6 @@ Deno.serve(async (req) => {
     const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
     })
-    // Client "serveur" : lecture des clés API et remboursements uniquement.
-    adminClient = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false },
-    })
-
     const token = authHeader.replace('Bearer ', '')
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token)
     if (authError || !user) {
@@ -110,149 +183,13 @@ Deno.serve(async (req) => {
       return json({ success: true, newBalance })
     }
 
-    // 4. RÉCUPÉRATION DES CLÉS API (ROTATION DYNAMIQUE)
-    let keys: string[] = []
-    
-    // Tentative de récupération depuis la base de données (Table api_keys)
-    try {
-        const { data: dbKeys, error: keysError } = await adminClient.rpc('get_active_api_keys', { p_provider: 'gemini' })
-        if (!keysError && dbKeys && dbKeys.length > 0) {
-            keys = (dbKeys as { key_value: string }[]).map(k => k.key_value)
-        } else if (keysError && keysError.code !== 'P0001' && keysError.message !== 'function public.get_active_api_keys(text) does not exist') {
-            console.warn('[Keys RPC Warning]', keysError.message)
-        }
-    } catch (e) {
-        console.warn('[Keys RPC Exception]', e)
-    }
-
-    // Fallback sur les variables d'environnement si la BDD est vide
+    // Clés Gemini + rotation intelligente (pauses des clés épuisées)
+    const keys = await loadGeminiKeys(adminClient)
     if (keys.length === 0) {
-        const envKey = Deno.env.get('GEMINI_API_KEY')
-        if (envKey) {
-            keys = envKey.split(',').map(k => k.trim()).filter(k => k)
-        }
+      return json({ error: 'Aucune clé API Gemini disponible (ni en BDD, ni en ENV).' }, 500)
     }
-
-    if (keys.length === 0) {
-      return new Response(JSON.stringify({ error: 'Aucune clé API Gemini disponible (ni en BDD, ni en ENV).' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    // Pauses des clés épuisées (429), partagées entre toutes les instances de
-    // la fonction : on ne réessaie pas une clé dont le quota est atteint.
-    const keyFps = new Map<string, string>()
-    for (const k of keys) keyFps.set(k, await Rot.keyFingerprint(k))
-    const paused = new Set<string>()
-    try {
-      const { data: pauses } = await adminClient.from('api_key_cooldowns')
-        .select('key_fp, model').gt('until', new Date().toISOString())
-      for (const p of pauses ?? []) paused.add(Rot.pauseKey(p.key_fp as string, p.model as string))
-    } catch (e) {
-      console.warn('[Rotation] Pauses indisponibles :', e)
-    }
-
-    async function pauseKeyModel(key: string, model: string, bodyText: string) {
-      const fp = keyFps.get(key)!
-      const info = Rot.parseQuotaError(bodyText)
-      const until = Rot.cooldownUntil(info)
-      paused.add(Rot.pauseKey(fp, model))
-      console.warn(`[Rotation] Clé ${fp.slice(0, 6)}… en pause pour ${model} jusqu'à ${until.toISOString()} (${info.daily ? 'quota du jour' : 'quota minute'})`)
-      try {
-        await adminClient!.from('api_key_cooldowns').upsert({
-          key_fp: fp, model, until: until.toISOString(), reason: info.daily ? 'daily' : 'minute', updated_at: new Date().toISOString(),
-        }, { onConflict: 'key_fp,model' })
-      } catch (e) {
-        console.warn('[Rotation] Enregistrement de la pause impossible :', e)
-      }
-    }
-
-    // Fonction de rotation intelligente (Modèles + Clés)
-    async function fetchWithSmartRotation(endpoint: string, payload: unknown, availableKeys: string[], requestedModel: string, actionType: string = 'text') {
-        const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-        // Chaîne de fallback par défaut
-        let defaultChain = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-3.1-flash-preview', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'];
-        
-        if (actionType === 'audio') {
-            // Uniquement des modèles de synthèse vocale : un modèle texte renvoie
-            // « only supports text output » et bloque la rotation des clés.
-            defaultChain = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
-        }
-
-        const modelsToTry = [...new Set([requestedModel, ...defaultChain])];
-        
-        // Mélanger les clés pour équilibrer la charge
-        const shuffledKeys = [...availableKeys].sort(() => Math.random() - 0.5);
-        
-        let lastResponse: Response | null = null;
-        let lastErrorText = "";
-        let attempted = 0;
-
-        for (const currentModel of modelsToTry) {
-            for (let i = 0; i < shuffledKeys.length; i++) {
-                const currentKey = shuffledKeys[i];
-                // Clé en pause pour ce modèle (quota atteint) : on passe directement
-                if (paused.has(Rot.pauseKey(keyFps.get(currentKey)!, currentModel))) continue;
-                attempted++;
-                const separator = endpoint.includes('?') ? '&' : '?';
-                const fullUrl = `${BASE_URL}/${currentModel}:${endpoint}${separator}key=${currentKey}`;
-
-                try {
-                    const res = await fetch(fullUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (res.ok) {
-                        return res;
-                    }
-
-                    lastResponse = res;
-                    lastErrorText = await res.text();
-                    const status = res.status;
-
-                    console.warn(`[Smart Rotation] Model: ${currentModel}, KeyIndex: ${i}, Status: ${status}`);
-
-                    if (status === 429) {
-                        // Quota dépassé : on met la clé en pause pour ce modèle, puis clé suivante
-                        await pauseKeyModel(currentKey, currentModel, lastErrorText);
-                        continue;
-                    } else if (status === 400 && lastErrorText.includes("API key not valid")) {
-                        continue; // Clé invalide, on essaie la clé suivante
-                    } else if (status === 404 || status === 503) {
-                        break; // Modèle introuvable ou surchargé, on passe au modèle suivant
-                    } else {
-                        // Autres erreurs (ex: prompt invalide), on ne réessaie pas
-                        let errorJson;
-                        try { errorJson = JSON.parse(lastErrorText); } catch { /* ignore */ }
-                        const message = errorJson?.error?.message || lastErrorText;
-                        throw new Error(`Google API Error (${status}): ${message}`);
-                    }
-                } catch (e) {
-                    if (e instanceof Error && e.message.includes('Google API Error')) {
-                        throw e;
-                    }
-                    console.error(`[Smart Rotation] Fetch error:`, e);
-                }
-            }
-        }
-
-        // Toutes les clés sont épuisées (ou déjà en pause) pour ces modèles
-        if (attempted === 0 || lastResponse?.status === 429) {
-            throw new Rot.QuotaExhaustedError(actionType === 'audio' ? 'audio' : 'text');
-        }
-
-        if (lastResponse) {
-            let errorJson;
-            try { errorJson = JSON.parse(lastErrorText); } catch { /* ignore */ }
-            const message = errorJson?.error?.message || lastErrorText;
-            throw new Error(`Google API Error (${lastResponse.status}) after all retries: ${message}`);
-        }
-
-        throw new Error("Failed to fetch from Google API: All keys and models exhausted.");
-    }
+    const gemini = await createGeminiClient(adminClient, keys)
+    const fetchWithSmartRotation = gemini.fetch
 
     const targetModel = model || 'gemini-3-flash-preview'
     const { systemInstruction, ...genConfig } = config || {}
@@ -285,7 +222,6 @@ Deno.serve(async (req) => {
     // =================================================================
     // LEÇON AU TABLEAU
     // =================================================================
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
     const VOICES = new Set(['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'])
     const db = adminClient
 
@@ -333,19 +269,6 @@ Deno.serve(async (req) => {
           console.warn(`[Board] Sortie invalide après ${Math.round(elapsed / 1000)} s, nouvel essai :`, (e as Error).message)
         }
       }
-    }
-
-    /** Synthèse vocale du professeur (français, ton chaleureux) → base64 PCM 24 kHz. */
-    async function teacherVoice(spoken: string, voice: string): Promise<string> {
-      const res = await fetchWithSmartRotation('generateContent', {
-        contents: [{ parts: [{ text: `Lis ce texte en français, d'une voix chaleureuse, claire et posée de professeur : ${spoken}` }] }],
-        generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
-      }, keys, 'gemini-2.5-flash-preview-tts', 'audio')
-      const data = await res.json()
-      const parts = (data.candidates?.[0]?.content?.parts ?? []) as { inlineData?: { data?: string } }[]
-      const b64 = parts.find(p => p.inlineData?.data)?.inlineData?.data
-      if (!b64) throw new Error('Audio vide')
-      return b64
     }
 
     async function getSyllabus(lang: string, level: string): Promise<Board.SyllabusEntry[]> {
@@ -475,16 +398,51 @@ Deno.serve(async (req) => {
         if (existing.data?.signedUrl) return json({ url: existing.data.signedUrl })
       }
 
-      const audio = encodeTeacherAudio(await teacherVoice(step.say, voice))
-      const storedPath = audio.ext === 'mp3' ? path : legacyPath
-      const inline = () => json({ audioBase64: Board.bytesToBase64(audio.bytes), audioMime: audio.mime })
-      const { error: upErr } = await bucket.upload(storedPath, new Blob([audio.bytes], { type: audio.mime }), { contentType: audio.mime, upsert: true })
-      if (upErr) {
-        console.warn('[Board] Stockage audio indisponible, envoi direct :', upErr.message)
-        return inline()
+      const stored = await storeStepAudio(db, gemini, lesson.id, i, voice, step.say)
+      if (stored.url) return json({ url: stored.url })
+      return json({ audioBase64: Board.bytesToBase64(stored.audio.bytes), audioMime: stored.audio.mime })
+    }
+
+    // -----------------------------------------------------------------
+    // Correction d'une leçon par l'admin : modification ou régénération.
+    // La correction vaut pour tous les élèves ; l'audio périmé est supprimé.
+    // -----------------------------------------------------------------
+    if (action === 'board_admin_save' || action === 'board_admin_regenerate') {
+      if (!isAdmin) return json({ error: "Réservé à l'administrateur." }, 403)
+      if (typeof body.lessonId !== 'string' || !UUID_RE.test(body.lessonId)) return json({ error: 'Leçon invalide.' }, 400)
+      const { data: row } = await db.from('board_lessons')
+        .select('id, language, level, lesson_number, content').eq('id', body.lessonId).maybeSingle()
+      if (!row) return json({ error: 'Leçon introuvable.' }, 404)
+      const old = row.content as Board.BoardLessonContent
+      const fallback: Board.SyllabusEntry = { title: old.title, titleMg: old.titleMg, objective: old.objective }
+
+      let content: Board.BoardLessonContent
+      if (action === 'board_admin_save') {
+        try {
+          content = Board.sanitizeLesson(body.content, fallback)
+        } catch (e) {
+          if (e instanceof Board.InvalidLessonError) return json({ error: 'Leçon incomplète : il faut au moins 4 étapes avec un texte parlé et un élément au tableau.' }, 400)
+          throw e
+        }
+      } else {
+        const syllabus = await getSyllabus(row.language, row.level)
+        const n = row.lesson_number as number
+        const entry = syllabus[n - 1] ?? fallback
+        const prompt = Board.buildLessonPrompt(row.language, row.level, n, entry, syllabus.slice(0, n - 1).map(e => e.title))
+        content = await generateValid(prompt, Board.LESSON_SCHEMA, raw => Board.sanitizeLesson(raw, entry))
       }
-      const signed = await bucket.createSignedUrl(storedPath, 3600)
-      return signed.data?.signedUrl ? json({ url: signed.data.signedUrl }) : inline()
+
+      const { error: upErr } = await db.from('board_lessons')
+        .update({ content, title: content.title, title_mg: content.titleMg }).eq('id', row.id)
+      if (upErr) throw new Error(`Enregistrement impossible : ${upErr.message}`)
+      const stale = action === 'board_admin_regenerate'
+        ? 'all' as const
+        : changedSpokenSteps((old.steps ?? []).map(s => s.say), content.steps.map(s => s.say))
+      const removedAudio = await purgeStepAudio(db, row.id, stale)
+      return json({
+        lesson: { id: row.id, language: row.language, level: row.level, number: row.lesson_number, ...content },
+        removedAudio,
+      })
     }
 
     if (action === 'board_question') {
@@ -502,7 +460,7 @@ Deno.serve(async (req) => {
       if (answer.say) {
         try {
           const voice = VOICES.has(body.voiceName) ? body.voiceName as string : 'Kore'
-          const audio = encodeTeacherAudio(await teacherVoice(answer.say, voice))
+          const audio = encodeTeacherAudio(await teacherVoice(gemini, answer.say, voice))
           audioBase64 = Board.bytesToBase64(audio.bytes)
           audioMime = audio.mime
         } catch (e) {
