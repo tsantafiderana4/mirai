@@ -27,6 +27,7 @@ import DebugConsole from './components/DebugConsole';
 
 // Lazy Load Heavy Modules
 const ExamHub = React.lazy(() => import('./modules/SmartExam'));
+const BoardLessonScreen = React.lazy(() => import('./components/Board/BoardLessonScreen'));
 
 // Mock Guest User for Landing Page Chatbot
 const GUEST_USER: UserProfile = {
@@ -67,7 +68,7 @@ const AppContent: React.FC = () => {
   const [isRedirecting, setIsRedirecting] = useState(false);
   
   // Modes
-  const [activeMode, setActiveMode] = useState<'chat' | 'exercise' | 'practice' | 'exam'>('chat');
+  const [activeMode, setActiveMode] = useState<'chat' | 'exercise' | 'practice' | 'exam' | 'board'>('chat');
   const [currentExercises, setCurrentExercises] = useState<ExerciseItem[]>([]);
   const [isGeneratingExercise, setIsGeneratingExercise] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
@@ -530,6 +531,7 @@ const AppContent: React.FC = () => {
                 onStartPractice={() => setActiveMode('practice')}
                 onStartExercise={startExercise}
                 onStartExam={startExam}
+                onStartBoard={() => setActiveMode('board')}
                 notify={notify}
                 onShowPayment={() => setShowPayment(true)}
                 onChangeCourse={handleChangeCourse}
@@ -558,6 +560,22 @@ const AppContent: React.FC = () => {
                       user={user}
                       onClose={() => setActiveMode('chat')}
                       onUpdateUser={setUser}
+                      onShowPayment={() => setShowPayment(true)}
+                      notify={notify}
+                  />
+              </React.Suspense>
+          )}
+
+          {activeMode === 'board' && (
+              <React.Suspense fallback={
+                  <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#07110e]">
+                      <Loader2 className="w-10 h-10 animate-spin text-emerald-400" />
+                  </div>
+              }>
+                  <BoardLessonScreen
+                      language={currentSession.language || user.preferences?.targetLanguage || 'Anglais'}
+                      level={currentSession.level || user.preferences?.level || 'A1'}
+                      onClose={() => setActiveMode('chat')}
                       onShowPayment={() => setShowPayment(true)}
                       notify={notify}
                   />

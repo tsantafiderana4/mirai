@@ -28,3 +28,10 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO anon, authenticated, service_ro
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
+
+-- Stockage (bucket audio des leçons)
+CREATE SCHEMA IF NOT EXISTS storage;
+CREATE TABLE IF NOT EXISTS storage.buckets (
+  id text PRIMARY KEY, name text NOT NULL, public boolean DEFAULT false,
+  file_size_limit bigint, allowed_mime_types text[]
+);

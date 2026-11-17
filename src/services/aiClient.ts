@@ -15,7 +15,11 @@ export type AIAction =
     | 'generate_exam'
     | 'generate_speech'
     | 'charge_voice_minute'
-    | 'live_token';
+    | 'live_token'
+    | 'board_syllabus'
+    | 'board_lesson_open'
+    | 'board_step_audio'
+    | 'board_question';
 
 /** Usage déclaré au serveur : il détermine le prix (voir pricing.ts côté serveur). */
 export type AIPurpose =

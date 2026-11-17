@@ -16,5 +16,8 @@ $PSQL -d $DB -f 10_attack_scenarios.sql
 $PSQL -d $DB -f ../migrations/20261117000000_ai_rate_limits.sql >/dev/null
 echo "=== Limite de débit IA ==="
 $PSQL -d $DB -f 20_rate_limit.sql
+$PSQL -d $DB -f ../migrations/20261118000000_board_lessons.sql >/dev/null
+echo "=== Leçon au tableau ==="
+$PSQL -d $DB -f 30_board_lessons.sql
 echo "=== Clés migrées de system_settings vers api_keys ==="
 $PSQL -d $DB -c "SELECT key_value FROM public.api_keys ORDER BY 1" -c "SELECT admin_contact FROM public.system_settings"

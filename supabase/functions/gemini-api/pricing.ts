@@ -37,6 +37,10 @@ export const PURPOSE_COSTS: Record<Purpose, number> = {
 export const DEFAULT_GENERATION_COST = 1
 
 export const VOICE_MINUTE_COST = 5
+/** Leçon au tableau complète (débitée une seule fois par élève et par leçon). */
+export const BOARD_LESSON_COST = 5
+/** Question posée au professeur pendant une leçon au tableau. */
+export const BOARD_QUESTION_COST = 1
 export const EXAM_COSTS = { certification: 100, diagnostic: 40 } as const
 
 const GENERATION_ACTIONS = new Set(['generate', 'generate_stream', 'generate_json', 'generate_speech'])
@@ -48,6 +52,11 @@ export interface Pricing {
   free: boolean
   /** L'action déclenche un appel à Gemini (soumis à la limite de débit). */
   generates: boolean
+  /**
+   * L'action gère elle-même la facturation (ex. leçon déjà débloquée =
+   * gratuite) : on ne bloque pas les comptes à 0 crédit en amont.
+   */
+  selfBilled?: boolean
 }
 
 export function priceRequest(action: string, purpose: unknown, examType?: unknown): Pricing {
@@ -57,6 +66,21 @@ export function priceRequest(action: string, purpose: unknown, examType?: unknow
   if (action === 'live_token') {
     // La voix en direct est facturée à la minute (charge_voice_minute).
     return { cost: 0, free: false, generates: true }
+  }
+  if (action === 'board_syllabus') {
+    // Liste des 20 leçons : générée une fois puis partagée (gratuit, plafonné)
+    return { cost: 0, free: true, generates: true, selfBilled: true }
+  }
+  if (action === 'board_lesson_open') {
+    // 5 crédits débités dans l'action, seulement au premier déblocage
+    return { cost: 0, free: false, generates: true, selfBilled: true }
+  }
+  if (action === 'board_step_audio') {
+    // Audio d'une leçon déjà débloquée : inclus dans le prix de la leçon
+    return { cost: 0, free: false, generates: false, selfBilled: true }
+  }
+  if (action === 'board_question') {
+    return { cost: BOARD_QUESTION_COST, free: false, generates: true }
   }
   if (action === 'generate_exam') {
     const cost = examType === 'certification' ? EXAM_COSTS.certification : EXAM_COSTS.diagnostic

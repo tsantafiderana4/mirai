@@ -43,3 +43,10 @@ Deno.test('aucun tarif négatif', () => {
     if (cost < 0) throw new Error(`${purpose} a un coût négatif`)
   }
 })
+
+Deno.test('leçon au tableau : facturée dans l\'action, audio inclus, question 1 crédit', () => {
+  assertEquals(priceRequest('board_lesson_open', 'support'), { cost: 0, free: false, generates: true, selfBilled: true })
+  assertEquals(priceRequest('board_step_audio', undefined).generates, false)
+  assertEquals(priceRequest('board_question', 'support'), { cost: 1, free: false, generates: true })
+  assertEquals(priceRequest('board_syllabus', undefined).free, true)
+})

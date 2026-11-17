@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Phone, ArrowLeft, Sun, Moon, Zap, ChevronDown, Repeat, MessageCircle, Brain, Loader2, AlertTriangle, Play, BookOpen, Trophy, Cloud, CloudOff, CloudLightning, Award, Check, Volume2, Globe } from 'lucide-react';
+import { Presentation, Phone, ArrowLeft, Sun, Moon, Zap, ChevronDown, Repeat, MessageCircle, Brain, Loader2, AlertTriangle, Play, BookOpen, Trophy, Cloud, CloudOff, CloudLightning, Award, Check, Volume2, Globe } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ExplanationLanguage } from '../types';
 import { ChatMessage } from '../types';
@@ -24,6 +24,7 @@ interface Props {
   onStartExercise: () => void;
   onStartVoiceCall: () => void; 
   onStartExam: () => void;
+  onStartBoard: () => void;
   notify: (m: string, t?: string) => void;
   onShowPayment: () => void;
   onChangeCourse: () => void;
@@ -47,7 +48,7 @@ function pcmToAudioBuffer(data: Uint8Array, ctx: AudioContext, sampleRate: numbe
 
 const ChatInterface: React.FC<Props> = ({ 
   onShowProfile, onExit, 
-  onStartPractice, onStartExercise, onStartVoiceCall, onStartExam,
+  onStartPractice, onStartExercise, onStartVoiceCall, onStartExam, onStartBoard,
   notify, onShowPayment, onChangeCourse, onShowCulturalIntro
 }) => {
   const { user, setUser, setCurrentSession, currentSession } = useAppStore();
@@ -309,6 +310,7 @@ const ChatInterface: React.FC<Props> = ({
                                     >🇲🇬 MG</button>
                                 </div>
                             </div>
+                            <button onClick={onStartBoard} className="w-full text-left px-4 py-3 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 flex items-center gap-2 text-sm font-bold text-emerald-700 dark:text-emerald-300"><Presentation className="w-4 h-4 text-emerald-500" /> {t('board.entry')}</button>
                             <button onClick={onStartPractice} className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200"><MessageCircle className="w-4 h-4 text-indigo-500" /> {t('dashboard.start_dialogue')}</button>
                             <button onClick={onStartExercise} className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200"><Brain className="w-4 h-4 text-emerald-500" /> {t('dashboard.start_exercise')}</button>
                             <button onClick={onStartExam} className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200"><Trophy className="w-4 h-4 text-rose-500" /> {t('dashboard.start_exam')}</button>
@@ -401,6 +403,24 @@ const ChatInterface: React.FC<Props> = ({
                             Immersion Culturelle
                         </button>
                     </div>
+
+                    <button
+                        onClick={onStartBoard}
+                        className="group relative mb-3 flex w-full items-center gap-4 overflow-hidden rounded-2xl bg-[#0f1d18] p-4 text-left text-white shadow-lg ring-1 ring-emerald-400/30 transition hover:ring-emerald-300/60 active:scale-[0.99]"
+                    >
+                        <span className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(52,211,153,0.25),transparent_60%)]" />
+                        <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-400 text-emerald-950">
+                            <Presentation className="h-6 w-6" />
+                        </span>
+                        <span className="relative min-w-0 flex-1">
+                            <span className="flex items-center gap-2 font-chalk text-xl leading-tight">
+                                {t('board.entry')}
+                                <span className="rounded-full bg-amber-300 px-2 py-0.5 font-sans text-[10px] font-black uppercase tracking-wider text-amber-950">{t('board.new_badge')}</span>
+                            </span>
+                            <span className="block text-xs text-emerald-100/80">{t('board.entry_desc')}</span>
+                        </span>
+                        <span className="relative text-lg">🇲🇬</span>
+                    </button>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {[

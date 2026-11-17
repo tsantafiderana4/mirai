@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.39.3'
 
-import { priceRequest, RATE_LIMIT_MESSAGES } from './pricing.ts'
+import { priceRequest, RATE_LIMIT_MESSAGES, BOARD_LESSON_COST } from './pricing.ts'
+import * as Board from './boardLesson.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -72,9 +73,9 @@ Deno.serve(async (req) => {
     }
 
     const isAdmin = profile.role === 'admin'
-    const { cost, free, generates } = priceRequest(action, body.purpose, body.examType)
+    const { cost, free, generates, selfBilled } = priceRequest(action, body.purpose, body.examType)
 
-    if (!isAdmin && cost === 0 && (profile.credits ?? 0) <= 0) {
+    if (!isAdmin && !selfBilled && cost === 0 && (profile.credits ?? 0) <= 0) {
       return json({ error: 'Crédits insuffisants.' }, 402)
     }
 
@@ -236,6 +237,207 @@ Deno.serve(async (req) => {
         lastErr = `${res.status} ${await res.text()}`
       }
       throw new Error(`Impossible de créer un jeton Live: ${lastErr}`)
+    }
+
+    // =================================================================
+    // LEÇON AU TABLEAU
+    // =================================================================
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    const VOICES = new Set(['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'])
+    const db = adminClient
+
+    /** Appel Gemini avec schéma JSON imposé ; ignore les parties « pensée ». */
+    async function generateJson(prompt: string, schema: unknown, temperature = 0.6): Promise<unknown> {
+      const res = await fetchWithSmartRotation('generateContent', {
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature, maxOutputTokens: 16384 },
+      }, keys, 'gemini-3-flash-preview')
+      const data = await res.json()
+      const parts = (data.candidates?.[0]?.content?.parts ?? []) as { text?: string; thought?: boolean }[]
+      return Board.parseModelJson(parts.filter(p => !p.thought).map(p => p.text ?? '').join(''))
+    }
+
+    /** Génère, valide et réessaie une fois si la sortie du modèle est inexploitable. */
+    async function generateValid<T>(prompt: string, schema: unknown, sanitize: (raw: unknown) => T): Promise<T> {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return sanitize(await generateJson(prompt, schema, attempt === 0 ? 0.6 : 0.4))
+        } catch (e) {
+          const retryable = e instanceof Board.InvalidLessonError || e instanceof SyntaxError
+          if (!retryable || attempt >= 1) throw e
+          console.warn('[Board] Sortie invalide, nouvel essai :', (e as Error).message)
+        }
+      }
+    }
+
+    /** Synthèse vocale du professeur (français, ton chaleureux) → base64 PCM 24 kHz. */
+    async function teacherVoice(spoken: string, voice: string): Promise<string> {
+      const res = await fetchWithSmartRotation('generateContent', {
+        contents: [{ parts: [{ text: `Lis ce texte en français, d'une voix chaleureuse, claire et posée de professeur : ${spoken}` }] }],
+        generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
+      }, keys, 'gemini-2.5-flash-preview-tts', 'audio')
+      const data = await res.json()
+      const parts = (data.candidates?.[0]?.content?.parts ?? []) as { inlineData?: { data?: string } }[]
+      const b64 = parts.find(p => p.inlineData?.data)?.inlineData?.data
+      if (!b64) throw new Error('Audio vide')
+      return b64
+    }
+
+    async function getSyllabus(lang: string, level: string): Promise<Board.SyllabusEntry[]> {
+      const key = Board.syllabusKey(lang, level)
+      const { data: cached } = await db.from('board_syllabus').select('lessons').eq('cache_key', key).maybeSingle()
+      if (cached?.lessons) return cached.lessons as Board.SyllabusEntry[]
+
+      const lessons = await generateValid(Board.buildSyllabusPrompt(lang, level), Board.SYLLABUS_SCHEMA, raw => {
+        const l = Board.sanitizeSyllabus(raw)
+        if (l.length < 10) throw new Board.InvalidLessonError(`Programme trop court (${l.length})`)
+        return l
+      })
+      await db.from('board_syllabus').upsert({ cache_key: key, language: lang, level, lessons }, { onConflict: 'cache_key', ignoreDuplicates: true })
+      // En cas de génération simultanée, on garde la version enregistrée en premier
+      const { data: saved } = await db.from('board_syllabus').select('lessons').eq('cache_key', key).single()
+      return (saved?.lessons ?? lessons) as Board.SyllabusEntry[]
+    }
+
+    /** Leçon débloquée par l'utilisateur (ou admin), sinon null. */
+    async function loadUnlockedLesson(lessonId: unknown) {
+      if (typeof lessonId !== 'string' || !UUID_RE.test(lessonId)) return null
+      if (!isAdmin) {
+        const { data: acc } = await db.from('board_lesson_access').select('lesson_id')
+          .eq('user_id', user!.id).eq('lesson_id', lessonId).maybeSingle()
+        if (!acc) return null
+      }
+      const { data } = await db.from('board_lessons').select('id, language, level, content').eq('id', lessonId).maybeSingle()
+      return data as { id: string; language: string; level: string; content: Board.BoardLessonContent } | null
+    }
+
+    if (action === 'board_syllabus') {
+      const lang = Board.normalizeLanguage(body.language)
+      const level = Board.normalizeLevel(body.level)
+      if (!lang || !level) return json({ error: 'Langue ou niveau invalide.' }, 400)
+
+      const syllabus = await getSyllabus(lang, level)
+      const { data: rows } = await db.from('board_lessons').select('id, lesson_number').eq('language', lang).eq('level', level)
+      const ids = (rows ?? []).map(r => r.id)
+      const { data: access } = ids.length
+        ? await db.from('board_lesson_access').select('lesson_id, completed').eq('user_id', user.id).in('lesson_id', ids)
+        : { data: [] as { lesson_id: string; completed: boolean }[] }
+      const byNumber = new Map((rows ?? []).map(r => [r.lesson_number as number, r.id as string]))
+      const accessById = new Map((access ?? []).map(a => [a.lesson_id, a.completed]))
+
+      return json({
+        language: lang, level, price: BOARD_LESSON_COST,
+        lessons: syllabus.map((e, i) => {
+          const id = byNumber.get(i + 1)
+          return {
+            number: i + 1, ...e,
+            unlocked: isAdmin || (!!id && accessById.has(id)),
+            completed: !!id && accessById.get(id) === true,
+          }
+        }),
+      })
+    }
+
+    if (action === 'board_lesson_open') {
+      const lang = Board.normalizeLanguage(body.language)
+      const level = Board.normalizeLevel(body.level)
+      const n = Board.normalizeLessonNumber(body.lessonNumber)
+      if (!lang || !level || !n) return json({ error: 'Paramètres de leçon invalides.' }, 400)
+
+      const key = Board.lessonKey(lang, level, n)
+      let { data: row } = await db.from('board_lessons').select('id, content').eq('cache_key', key).maybeSingle()
+
+      let alreadyOwned = isAdmin
+      if (row && !isAdmin) {
+        const { data: acc } = await db.from('board_lesson_access').select('lesson_id')
+          .eq('user_id', user.id).eq('lesson_id', row.id).maybeSingle()
+        alreadyOwned = !!acc
+      }
+
+      // Paiement AVANT la génération : en cas d'échec, le catch rembourse.
+      if (!alreadyOwned) {
+        const { data: bal, error: payErr } = await supabaseClient.rpc('consume_credits', { p_amount: BOARD_LESSON_COST })
+        if (payErr || bal === null) return json({ error: 'Crédits insuffisants.' }, 402)
+        newBalance = bal as number
+        creditsDeducted = BOARD_LESSON_COST
+        refundUserId = user.id
+      }
+
+      if (!row) {
+        const syllabus = await getSyllabus(lang, level)
+        const entry = syllabus[n - 1]
+        if (!entry) throw new Error(`Leçon ${n} absente du programme.`)
+        const prompt = Board.buildLessonPrompt(lang, level, n, entry, syllabus.slice(0, n - 1).map(e => e.title))
+        const content = await generateValid(prompt, Board.LESSON_SCHEMA, raw => Board.sanitizeLesson(raw, entry))
+
+        await db.from('board_lessons').upsert({
+          cache_key: key, language: lang, level, lesson_number: n,
+          title: content.title, title_mg: content.titleMg, content,
+        }, { onConflict: 'cache_key', ignoreDuplicates: true })
+        const { data: saved, error: savedErr } = await db.from('board_lessons').select('id, content').eq('cache_key', key).single()
+        if (savedErr || !saved) throw new Error('Enregistrement de la leçon impossible.')
+        row = saved
+      }
+
+      if (!isAdmin) {
+        const { error: accErr } = await db.from('board_lesson_access')
+          .upsert({ user_id: user.id, lesson_id: row.id }, { onConflict: 'user_id,lesson_id', ignoreDuplicates: true })
+        if (accErr) throw new Error("Déblocage de la leçon impossible.")
+      }
+
+      creditsDeducted = 0 // succès : plus rien à rembourser
+      return json({
+        lesson: { id: row.id, language: lang, level, number: n, ...(row.content as Board.BoardLessonContent) },
+        alreadyOwned, newBalance,
+      })
+    }
+
+    if (action === 'board_step_audio') {
+      const lesson = await loadUnlockedLesson(body.lessonId)
+      if (!lesson) return json({ error: 'Leçon non débloquée.' }, 403)
+      const i = Number(body.stepIndex)
+      const step = Number.isInteger(i) ? lesson.content.steps[i] : undefined
+      if (!step) return json({ error: 'Étape inconnue.' }, 400)
+      const voice = VOICES.has(body.voiceName) ? body.voiceName as string : 'Kore'
+
+      const bucket = db.storage.from('lesson-audio')
+      const path = `${lesson.id}/${i}-${voice}.wav`
+      const existing = await bucket.createSignedUrl(path, 3600)
+      if (existing.data?.signedUrl) return json({ url: existing.data.signedUrl })
+
+      const wav = Board.geminiPcmToWav(await teacherVoice(step.say, voice))
+      const { error: upErr } = await bucket.upload(path, new Blob([wav], { type: 'audio/wav' }), { contentType: 'audio/wav', upsert: true })
+      if (upErr) {
+        console.warn('[Board] Stockage audio indisponible, envoi direct :', upErr.message)
+        return json({ audioWavBase64: Board.bytesToBase64(wav) })
+      }
+      const signed = await bucket.createSignedUrl(path, 3600)
+      return signed.data?.signedUrl
+        ? json({ url: signed.data.signedUrl })
+        : json({ audioWavBase64: Board.bytesToBase64(wav) })
+    }
+
+    if (action === 'board_question') {
+      const lesson = await loadUnlockedLesson(body.lessonId)
+      if (!lesson) return json({ error: 'Leçon non débloquée.' }, 403)
+      const question = typeof body.question === 'string' ? body.question.trim() : ''
+      if (question.length < 2) return json({ error: 'Question vide.' }, 400)
+
+      const prompt = Board.buildQuestionPrompt(lesson.language, lesson.level, lesson.content, Number(body.stepIndex) || 0, question)
+      const answer = await generateValid(prompt, Board.ANSWER_SCHEMA, Board.sanitizeAnswer)
+
+      // Voix : facultative, la réponse écrite reste utilisable si la TTS échoue
+      let audioWavBase64: string | undefined
+      if (answer.say) {
+        try {
+          const voice = VOICES.has(body.voiceName) ? body.voiceName as string : 'Kore'
+          audioWavBase64 = Board.bytesToBase64(Board.geminiPcmToWav(await teacherVoice(answer.say, voice)))
+        } catch (e) {
+          console.warn('[Board] Voix de la réponse indisponible :', (e as Error).message)
+        }
+      }
+      creditsDeducted = 0
+      return json({ answer, audioWavBase64, newBalance })
     }
 
     if (action === 'generate') {
