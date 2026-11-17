@@ -67,3 +67,9 @@ export interface BoardAnswer {
 
 /** Voix du professeur : Gemini (qualité), voix du téléphone (économise la data) ou muet. */
 export type BoardVoiceMode = 'premium' | 'device' | 'off';
+
+/**
+ * Affichage du malagasy : « off » (français seul), « with » (français puis
+ * malagasy), « first » (malagasy en grand, français en petit).
+ */
+export type MgMode = 'off' | 'with' | 'first';

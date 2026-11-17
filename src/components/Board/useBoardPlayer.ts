@@ -29,6 +29,8 @@ export function useBoardPlayer({ lesson, voiceMode, voiceName, onVoiceFallback }
     const [duration, setDuration] = useState(1);
     const [autoAdvance, setAutoAdvance] = useState(true);
     const [answeredQuiz, setAnsweredQuiz] = useState<Record<number, boolean>>({});
+    // L'élève s'entraîne (ex. « Répète après moi ») : pas d'enchaînement automatique
+    const [held, setHeld] = useState(false);
     const [effectiveMode, setEffectiveMode] = useState<BoardVoiceMode>(voiceMode);
 
     const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -112,6 +114,7 @@ export function useBoardPlayer({ lesson, voiceMode, voiceName, onVoiceFallback }
         if (!s) return;
         stopAllSound();
         const token = ++runToken.current;
+        setHeld(false);
         setStepIndex(i);
         setClock(0);
         const estimate = estimateDuration(s.say, s.items.length);
@@ -221,10 +224,16 @@ export function useBoardPlayer({ lesson, voiceMode, voiceName, onVoiceFallback }
     const stepHasQuiz = !!step?.items.some(it => it.kind === 'quiz');
     const waitingForQuiz = stepHasQuiz && !answeredQuiz[stepIndex];
     useEffect(() => {
-        if (phase !== 'stepDone' || !autoAdvance || waitingForQuiz || isLast) return;
+        if (phase !== 'stepDone' || !autoAdvance || waitingForQuiz || isLast || held) return;
         const t = setTimeout(() => next(), 1600);
         return () => clearTimeout(t);
-    }, [phase, autoAdvance, waitingForQuiz, isLast, next]);
+    }, [phase, autoAdvance, waitingForQuiz, isLast, held, next]);
+
+    /** L'élève s'entraîne : on met le prof en pause et on reste sur l'étape. */
+    const holdForPractice = useCallback(() => {
+        setHeld(true);
+        pause();
+    }, [pause]);
 
     // Changement de mode de voix en cours de leçon : on reprend l'étape
     const firstRender = useRef(true);
@@ -249,6 +258,6 @@ export function useBoardPlayer({ lesson, voiceMode, voiceName, onVoiceFallback }
         stepIndex, step, isLast, phase, revealedCount, stepProgress,
         effectiveMode, autoAdvance, setAutoAdvance, waitingForQuiz,
         start: () => startStep(stepIndex), pause, resume, next, prev: () => goTo(stepIndex - 1),
-        goTo, replay, markQuizAnswered, stopAllSound,
+        goTo, replay, markQuizAnswered, stopAllSound, holdForPractice, held,
     };
 }

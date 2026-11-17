@@ -22,6 +22,7 @@ Tout est déjà créé. Il ne reste qu'à **coller tes clés** aux bons endroits
   | `GEMINI_API_KEY` | `AIza…` (ta nouvelle clé) |
 
   Pour plusieurs clés en rotation : `AIzaCLE1,AIzaCLE2` (séparées par une virgule).
+  **Important** : le quota gratuit de Gemini est compté **par projet Google Cloud**, pas par clé. Deux clés du même projet partagent le même quota et ne servent à rien en rotation. Crée chaque clé dans un **projet différent** (dans AI Studio : *Create API key*, puis *Create API key in new project*). Une clé épuisée est mise en pause automatiquement jusqu'à la remise à zéro du quota (≈ 10 h, heure de Madagascar, pour le quota journalier).
 - **Ne la mets jamais** dans Render ni dans le code : le site est public.
 
 ### 2. Désactiver la confirmation par email

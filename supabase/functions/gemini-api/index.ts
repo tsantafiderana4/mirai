@@ -2,6 +2,8 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.3
 
 import { priceRequest, RATE_LIMIT_MESSAGES, BOARD_LESSON_COST } from './pricing.ts'
 import * as Board from './boardLesson.ts'
+import * as Rot from './keyRotation.ts'
+import { encodeTeacherAudio } from './audio.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -138,6 +140,34 @@ Deno.serve(async (req) => {
       })
     }
 
+    // Pauses des clés épuisées (429), partagées entre toutes les instances de
+    // la fonction : on ne réessaie pas une clé dont le quota est atteint.
+    const keyFps = new Map<string, string>()
+    for (const k of keys) keyFps.set(k, await Rot.keyFingerprint(k))
+    const paused = new Set<string>()
+    try {
+      const { data: pauses } = await adminClient.from('api_key_cooldowns')
+        .select('key_fp, model').gt('until', new Date().toISOString())
+      for (const p of pauses ?? []) paused.add(Rot.pauseKey(p.key_fp as string, p.model as string))
+    } catch (e) {
+      console.warn('[Rotation] Pauses indisponibles :', e)
+    }
+
+    async function pauseKeyModel(key: string, model: string, bodyText: string) {
+      const fp = keyFps.get(key)!
+      const info = Rot.parseQuotaError(bodyText)
+      const until = Rot.cooldownUntil(info)
+      paused.add(Rot.pauseKey(fp, model))
+      console.warn(`[Rotation] Clé ${fp.slice(0, 6)}… en pause pour ${model} jusqu'à ${until.toISOString()} (${info.daily ? 'quota du jour' : 'quota minute'})`)
+      try {
+        await adminClient!.from('api_key_cooldowns').upsert({
+          key_fp: fp, model, until: until.toISOString(), reason: info.daily ? 'daily' : 'minute', updated_at: new Date().toISOString(),
+        }, { onConflict: 'key_fp,model' })
+      } catch (e) {
+        console.warn('[Rotation] Enregistrement de la pause impossible :', e)
+      }
+    }
+
     // Fonction de rotation intelligente (Modèles + Clés)
     async function fetchWithSmartRotation(endpoint: string, payload: unknown, availableKeys: string[], requestedModel: string, actionType: string = 'text') {
         const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -157,10 +187,14 @@ Deno.serve(async (req) => {
         
         let lastResponse: Response | null = null;
         let lastErrorText = "";
+        let attempted = 0;
 
         for (const currentModel of modelsToTry) {
             for (let i = 0; i < shuffledKeys.length; i++) {
                 const currentKey = shuffledKeys[i];
+                // Clé en pause pour ce modèle (quota atteint) : on passe directement
+                if (paused.has(Rot.pauseKey(keyFps.get(currentKey)!, currentModel))) continue;
+                attempted++;
                 const separator = endpoint.includes('?') ? '&' : '?';
                 const fullUrl = `${BASE_URL}/${currentModel}:${endpoint}${separator}key=${currentKey}`;
 
@@ -182,7 +216,9 @@ Deno.serve(async (req) => {
                     console.warn(`[Smart Rotation] Model: ${currentModel}, KeyIndex: ${i}, Status: ${status}`);
 
                     if (status === 429) {
-                        continue; // Quota dépassé, on essaie la clé suivante
+                        // Quota dépassé : on met la clé en pause pour ce modèle, puis clé suivante
+                        await pauseKeyModel(currentKey, currentModel, lastErrorText);
+                        continue;
                     } else if (status === 400 && lastErrorText.includes("API key not valid")) {
                         continue; // Clé invalide, on essaie la clé suivante
                     } else if (status === 404 || status === 503) {
@@ -201,6 +237,11 @@ Deno.serve(async (req) => {
                     console.error(`[Smart Rotation] Fetch error:`, e);
                 }
             }
+        }
+
+        // Toutes les clés sont épuisées (ou déjà en pause) pour ces modèles
+        if (attempted === 0 || lastResponse?.status === 429) {
+            throw new Rot.QuotaExhaustedError(actionType === 'audio' ? 'audio' : 'text');
         }
 
         if (lastResponse) {
@@ -424,21 +465,26 @@ Deno.serve(async (req) => {
       if (!step) return json({ error: 'Étape inconnue.' }, 400)
       const voice = VOICES.has(body.voiceName) ? body.voiceName as string : 'Kore'
 
+      // MP3 compact (~10× plus léger que le WAV) : stockage et trafic gratuits préservés
       const bucket = db.storage.from('lesson-audio')
-      const path = `${lesson.id}/${i}-${voice}.wav`
-      const existing = await bucket.createSignedUrl(path, 3600)
-      if (existing.data?.signedUrl) return json({ url: existing.data.signedUrl })
+      const path = `${lesson.id}/${i}-${voice}.mp3`
+      const legacyPath = `${lesson.id}/${i}-${voice}.wav`
+      // Audio déjà produit (MP3, ou ancien WAV) : aucun nouvel appel TTS, le quota est préservé
+      for (const p of [path, legacyPath]) {
+        const existing = await bucket.createSignedUrl(p, 3600)
+        if (existing.data?.signedUrl) return json({ url: existing.data.signedUrl })
+      }
 
-      const wav = Board.geminiPcmToWav(await teacherVoice(step.say, voice))
-      const { error: upErr } = await bucket.upload(path, new Blob([wav], { type: 'audio/wav' }), { contentType: 'audio/wav', upsert: true })
+      const audio = encodeTeacherAudio(await teacherVoice(step.say, voice))
+      const storedPath = audio.ext === 'mp3' ? path : legacyPath
+      const inline = () => json({ audioBase64: Board.bytesToBase64(audio.bytes), audioMime: audio.mime })
+      const { error: upErr } = await bucket.upload(storedPath, new Blob([audio.bytes], { type: audio.mime }), { contentType: audio.mime, upsert: true })
       if (upErr) {
         console.warn('[Board] Stockage audio indisponible, envoi direct :', upErr.message)
-        return json({ audioWavBase64: Board.bytesToBase64(wav) })
+        return inline()
       }
-      const signed = await bucket.createSignedUrl(path, 3600)
-      return signed.data?.signedUrl
-        ? json({ url: signed.data.signedUrl })
-        : json({ audioWavBase64: Board.bytesToBase64(wav) })
+      const signed = await bucket.createSignedUrl(storedPath, 3600)
+      return signed.data?.signedUrl ? json({ url: signed.data.signedUrl }) : inline()
     }
 
     if (action === 'board_question') {
@@ -451,17 +497,20 @@ Deno.serve(async (req) => {
       const answer = await generateValid(prompt, Board.ANSWER_SCHEMA, Board.sanitizeAnswer)
 
       // Voix : facultative, la réponse écrite reste utilisable si la TTS échoue
-      let audioWavBase64: string | undefined
+      let audioBase64: string | undefined
+      let audioMime: string | undefined
       if (answer.say) {
         try {
           const voice = VOICES.has(body.voiceName) ? body.voiceName as string : 'Kore'
-          audioWavBase64 = Board.bytesToBase64(Board.geminiPcmToWav(await teacherVoice(answer.say, voice)))
+          const audio = encodeTeacherAudio(await teacherVoice(answer.say, voice))
+          audioBase64 = Board.bytesToBase64(audio.bytes)
+          audioMime = audio.mime
         } catch (e) {
           console.warn('[Board] Voix de la réponse indisponible :', (e as Error).message)
         }
       }
       creditsDeducted = 0
-      return json({ answer, audioWavBase64, newBalance })
+      return json({ answer, audioBase64, audioMime, newBalance })
     }
 
     if (action === 'generate') {
@@ -583,6 +632,10 @@ Deno.serve(async (req) => {
     if (creditsDeducted > 0 && refundUserId && adminClient) {
       console.log(`[Refund] ${creditsDeducted} crédits remboursés à ${refundUserId}`)
       await adminClient.rpc('refund_credits', { p_user_id: refundUserId, p_amount: creditsDeducted })
+    }
+    if (error instanceof Rot.QuotaExhaustedError) {
+      console.warn('[Rotation] Toutes les clés sont en pause :', error.kind)
+      return json({ error: error.message, quota: error.kind }, 429)
     }
     const errorMessage = error instanceof Error ? error.message : String(error)
     console.error('[Edge Function Error]', error)

@@ -4,8 +4,8 @@ import {
     X, Play, Pause, SkipBack, SkipForward, RotateCcw, MessageCircleQuestion, Lock, CheckCircle2,
     Loader2, Send, Volume2, VolumeX, Smartphone, Sparkles, ChevronRight, Subtitles, MessageSquareOff, Trophy, BookOpen,
 } from 'lucide-react';
-import type { BoardAnswer, BoardLesson, BoardSyllabus, BoardVoiceMode, SyllabusLesson } from './types';
-import { BoardItemView, MgLine } from './BoardItemView';
+import type { BoardAnswer, BoardLesson, BoardSyllabus, BoardVoiceMode, MgMode, SyllabusLesson } from './types';
+import { BoardItemView, MgLine, Bilingual } from './BoardItemView';
 import { useBoardPlayer } from './useBoardPlayer';
 import { boardService, loadVoiceMode, saveVoiceMode, languageName } from '../../services/boardService';
 import { AIError } from '../../services/aiClient';
@@ -21,7 +21,13 @@ interface Props {
     notify: (m: string, t?: string) => void;
 }
 
-const MG_KEY = 'tm_board_show_mg';
+const MG_MODE_KEY = 'tm_board_mg_mode';
+const readMgMode = (fallback: MgMode): MgMode => {
+    try { const v = localStorage.getItem(MG_MODE_KEY); if (v === 'off' || v === 'with' || v === 'first') return v; } catch { /* ignore */ }
+    return fallback;
+};
+const writeMgMode = (m: MgMode) => { try { localStorage.setItem(MG_MODE_KEY, m); } catch { /* ignore */ } };
+const NEXT_MG_MODE: Record<MgMode, MgMode> = { with: 'first', first: 'off', off: 'with' };
 const SUB_KEY = 'tm_board_subtitles';
 const readFlag = (k: string, def: boolean) => { try { const v = localStorage.getItem(k); return v === null ? def : v === '1'; } catch { return def; } };
 const writeFlag = (k: string, v: boolean) => { try { localStorage.setItem(k, v ? '1' : '0'); } catch { /* ignore */ } };
@@ -53,9 +59,9 @@ const TeacherAvatar: React.FC<{ speaking: boolean }> = ({ speaking }) => (
 // Vue 1 : programme des 20 leçons
 // ---------------------------------------------------------------------
 const SyllabusView: React.FC<{
-    syllabus: BoardSyllabus | null; error: string | null; showMg: boolean;
+    syllabus: BoardSyllabus | null; error: string | null; mgMode: MgMode;
     onOpen: (l: SyllabusLesson) => void; onRetry: () => void;
-}> = ({ syllabus, error, showMg, onOpen, onRetry }) => {
+}> = ({ syllabus, error, mgMode, onOpen, onRetry }) => {
     const { t } = useTranslation();
     if (error) {
         return (
@@ -89,7 +95,7 @@ const SyllabusView: React.FC<{
                             </span>
                             <span className="min-w-0 flex-1">
                                 <span className="block font-semibold leading-snug text-white">{l.title}</span>
-                                {showMg && l.titleMg && <span className="block text-sm italic text-amber-200/90" lang="mg">{l.titleMg}</span>}
+                                {mgMode !== 'off' && l.titleMg && <span className="block text-sm italic text-amber-200/90" lang="mg">{l.titleMg}</span>}
                                 {isNext && <span className="mt-1 inline-block rounded-full bg-emerald-400/20 px-2 py-0.5 text-[0.7rem] font-bold uppercase tracking-wider text-emerald-200">{t('board.up_next')}</span>}
                             </span>
                             {l.unlocked
@@ -131,9 +137,9 @@ const PreparingView: React.FC = () => {
 // Feuille « Poser une question »
 // ---------------------------------------------------------------------
 const AskSheet: React.FC<{
-    language: string; showMg: boolean; busy: boolean; answer: BoardAnswer | null; answerSpeaking: boolean;
+    language: string; mgMode: MgMode; busy: boolean; answer: BoardAnswer | null; answerSpeaking: boolean;
     onSend: (q: string) => void; onClose: () => void; onReplayAnswer: () => void;
-}> = ({ language, showMg, busy, answer, answerSpeaking, onSend, onClose, onReplayAnswer }) => {
+}> = ({ language, mgMode, busy, answer, answerSpeaking, onSend, onClose, onReplayAnswer }) => {
     const { t } = useTranslation();
     const [q, setQ] = useState('');
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -179,7 +185,7 @@ const AskSheet: React.FC<{
                         </div>
                         {answer.say && <p className="mb-4 rounded-2xl bg-white/[0.05] p-4 text-base leading-relaxed text-slate-100">{answer.say}</p>}
                         <div className="space-y-4">
-                            {answer.items.map((it, i) => <BoardItemView key={i} item={it} language={language} showMg={showMg} />)}
+                            {answer.items.map((it, i) => <BoardItemView key={i} item={it} language={language} mgMode={mgMode} />)}
                         </div>
                         <button onClick={onClose} className="mt-6 w-full rounded-2xl bg-emerald-400 py-3.5 text-base font-extrabold text-emerald-950 active:scale-[0.99]">{t('board.resume')}</button>
                     </>
@@ -193,9 +199,9 @@ const AskSheet: React.FC<{
 // Vue 3 : la leçon au tableau
 // ---------------------------------------------------------------------
 const LessonView: React.FC<{
-    lesson: BoardLesson; showMg: boolean; subtitles: boolean; voiceMode: BoardVoiceMode;
+    lesson: BoardLesson; mgMode: MgMode; subtitles: boolean; voiceMode: BoardVoiceMode;
     onFinished: () => void; notify: (m: string, t?: string) => void; onShowPayment: () => void;
-}> = ({ lesson, showMg, subtitles, voiceMode, onFinished, notify, onShowPayment }) => {
+}> = ({ lesson, mgMode, subtitles, voiceMode, onFinished, notify, onShowPayment }) => {
     const { t } = useTranslation();
     const voiceName = useAppStore(s => s.user?.preferences?.voiceName);
     const [started, setStarted] = useState(false);
@@ -286,11 +292,12 @@ const LessonView: React.FC<{
                         <div className="flex flex-col items-start gap-4 py-6">
                             <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-widest text-emerald-200">{t('board.lesson_n', { n: lesson.number })} · {lesson.level}</span>
                             <h2 className="font-chalk text-4xl leading-tight text-white sm:text-5xl">{lesson.title}</h2>
-                            <MgLine text={lesson.titleMg} show={showMg} className="text-lg" />
+                            <MgLine text={lesson.titleMg} show={mgMode !== 'off'} className="text-lg" />
                             <div className="mt-2 rounded-2xl bg-white/[0.05] p-4 ring-1 ring-white/10">
                                 <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-emerald-200/90">{t('board.objective')}</p>
-                                <p className="mt-1 text-base text-slate-100">{lesson.objective}</p>
-                                <MgLine text={lesson.objectiveMg} show={showMg} />
+                                <div className="mt-1">
+                                    <Bilingual fr={lesson.objective} mg={lesson.objectiveMg} mode={mgMode} frClassName="text-base text-slate-100" mgFirstClassName="text-base text-amber-50" />
+                                </div>
                             </div>
                             <button
                                 onClick={() => { setStarted(true); player.start(); }}
@@ -310,7 +317,8 @@ const LessonView: React.FC<{
                             >
                                 {step.items.slice(0, Math.max(player.revealedCount, 0)).map((item, i) => (
                                     <BoardItemView
-                                        key={i} item={item} language={lesson.language} showMg={showMg}
+                                        key={i} item={item} language={lesson.language} mgMode={mgMode}
+                                        onPracticeStart={player.holdForPractice}
                                         onQuizAnswered={() => player.markQuizAnswered(player.stepIndex)}
                                     />
                                 ))}
@@ -369,7 +377,7 @@ const LessonView: React.FC<{
             <AnimatePresence>
                 {asking && (
                     <AskSheet
-                        language={lesson.language} showMg={showMg} busy={askBusy} answer={answer}
+                        language={lesson.language} mgMode={mgMode} busy={askBusy} answer={answer}
                         answerSpeaking={answerSpeaking} onSend={send} onClose={closeAsk} onReplayAnswer={playAnswer}
                     />
                 )}
@@ -381,7 +389,7 @@ const LessonView: React.FC<{
 // ---------------------------------------------------------------------
 // Vue 4 : résumé de fin de leçon
 // ---------------------------------------------------------------------
-const SummaryView: React.FC<{ lesson: BoardLesson; showMg: boolean; hasNext: boolean; onNext: () => void; onList: () => void; onReplay: () => void }> = ({ lesson, showMg, hasNext, onNext, onList, onReplay }) => {
+const SummaryView: React.FC<{ lesson: BoardLesson; mgMode: MgMode; hasNext: boolean; onNext: () => void; onList: () => void; onReplay: () => void }> = ({ lesson, mgMode, hasNext, onNext, onList, onReplay }) => {
     const { t } = useTranslation();
     return (
         <Slate>
@@ -391,7 +399,7 @@ const SummaryView: React.FC<{ lesson: BoardLesson; showMg: boolean; hasNext: boo
                 </motion.div>
                 <p className="text-sm font-bold uppercase tracking-widest text-emerald-200">{t('board.lesson_done')}</p>
                 <h2 className="mt-1 font-chalk text-4xl text-white">{lesson.title}</h2>
-                <MgLine text={lesson.titleMg} show={showMg} />
+                <MgLine text={lesson.titleMg} show={mgMode !== 'off'} />
                 {lesson.summary.length > 0 && (
                     <div className="mt-6">
                         <p className="mb-3 text-xs font-extrabold uppercase tracking-[0.16em] text-emerald-200/90">{t('board.summary_title')}</p>
@@ -400,8 +408,7 @@ const SummaryView: React.FC<{ lesson: BoardLesson; showMg: boolean; hasNext: boo
                                 <li key={i} className="flex gap-3">
                                     <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" />
                                     <div>
-                                        <p className="text-slate-100">{s}</p>
-                                        <MgLine text={lesson.summaryMg[i]} show={showMg} />
+                                        <Bilingual fr={s} mg={lesson.summaryMg[i]} mode={mgMode} frClassName="text-slate-100" mgFirstClassName="text-amber-50" />
                                     </div>
                                 </li>
                             ))}
@@ -436,7 +443,9 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
     const [lesson, setLesson] = useState<BoardLesson | null>(null);
     const [lessonRun, setLessonRun] = useState(0);
     const [confirm, setConfirm] = useState<SyllabusLesson | null>(null);
-    const [showMg, setShowMg] = useState(() => readFlag(MG_KEY, true));
+    // Par défaut : malagasy d'abord pour les élèves qui ont choisi le malagasy comme langue d'explication
+    const prefersMg = (user?.preferences?.explanationLanguage || '').includes('Malagasy');
+    const [mgMode, setMgMode] = useState<MgMode>(() => readMgMode(prefersMg ? 'first' : 'with'));
     const [subtitles, setSubtitles] = useState(() => readFlag(SUB_KEY, true));
     const [voiceMode, setVoiceMode] = useState<BoardVoiceMode>(loadVoiceMode);
 
@@ -481,7 +490,12 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
 
     const nextEntry = useMemo(() => lesson && syllabus?.lessons.find(l => l.number === lesson.number + 1), [lesson, syllabus]);
 
-    const toggleMg = () => setShowMg(v => { writeFlag(MG_KEY, !v); return !v; });
+    const cycleMg = () => setMgMode(m => {
+        const next = NEXT_MG_MODE[m];
+        writeMgMode(next);
+        notify(t(`board.mg_mode_${next}_hint`), 'info');
+        return next;
+    });
     const toggleSubs = () => setSubtitles(v => { writeFlag(SUB_KEY, !v); return !v; });
     const cycleVoice = () => setVoiceMode(v => {
         const nextMode: BoardVoiceMode = v === 'premium' ? 'device' : v === 'device' ? 'off' : 'premium';
@@ -500,13 +514,18 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
                     <X className="h-5 w-5" />
                 </button>
                 <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 text-[0.7rem] font-bold uppercase tracking-[0.18em] text-emerald-300">
+                    <p className="flex items-center gap-1.5 truncate whitespace-nowrap text-[0.7rem] font-bold uppercase tracking-[0.18em] text-emerald-300">
                         <img src={getFlagUrl(language)} alt="" className="h-3 w-4 rounded-sm object-cover" /> {languageName(language)} · {level}
                     </p>
                     <h1 className="truncate text-base font-bold sm:text-lg">{view === 'lesson' && lesson ? lesson.title : t('board.title')}</h1>
                 </div>
-                <button onClick={toggleMg} aria-pressed={showMg} className={`h-10 rounded-full px-3 text-xs font-extrabold ring-1 transition ${showMg ? 'bg-amber-300 text-amber-950 ring-amber-300' : 'bg-white/[0.06] text-slate-300 ring-white/10'}`} title={t('board.show_mg')}>
-                    🇲🇬 MG
+                <button
+                    onClick={cycleMg}
+                    className={`h-10 shrink-0 rounded-full px-3 text-xs font-extrabold ring-1 transition ${mgMode === 'off' ? 'bg-white/[0.06] text-slate-300 ring-white/10' : 'bg-amber-300 text-amber-950 ring-amber-300'}`}
+                    title={t('board.mg_mode_title')}
+                    aria-label={`${t('board.mg_mode_title')} : ${t(`board.mg_mode_${mgMode}`)}`}
+                >
+                    {t(`board.mg_mode_${mgMode}`)}
                 </button>
                 {view === 'lesson' && (
                     <>
@@ -527,20 +546,20 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
                             <h2 className="font-chalk text-3xl text-white">{t('board.program_title')}</h2>
                             <p className="mt-1 text-sm text-slate-400">{t('board.program_subtitle')}</p>
                         </div>
-                        <SyllabusView syllabus={syllabus} error={syllabusError?.startsWith('board.') ? t(syllabusError) : syllabusError} showMg={showMg} onOpen={requestOpen} onRetry={loadSyllabus} />
+                        <SyllabusView syllabus={syllabus} error={syllabusError?.startsWith('board.') ? t(syllabusError) : syllabusError} mgMode={mgMode} onOpen={requestOpen} onRetry={loadSyllabus} />
                     </>
                 )}
                 {view === 'preparing' && <PreparingView />}
                 {view === 'lesson' && lesson && (
                     <LessonView
                         key={`${lesson.id}-${lessonRun}`}
-                        lesson={lesson} showMg={showMg} subtitles={subtitles} voiceMode={voiceMode}
+                        lesson={lesson} mgMode={mgMode} subtitles={subtitles} voiceMode={voiceMode}
                         onFinished={onFinished} notify={notify} onShowPayment={onShowPayment}
                     />
                 )}
                 {view === 'summary' && lesson && (
                     <SummaryView
-                        lesson={lesson} showMg={showMg} hasNext={!!nextEntry}
+                        lesson={lesson} mgMode={mgMode} hasNext={!!nextEntry}
                         onNext={() => nextEntry && requestOpen(nextEntry)}
                         onList={() => setView('syllabus')}
                         onReplay={() => { setLessonRun(r => r + 1); setView('lesson'); }}
@@ -555,7 +574,7 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
                         <motion.div role="dialog" aria-modal="true" className="w-full max-w-md rounded-[1.75rem] bg-[#0f1d18] p-6 ring-1 ring-white/10" initial={{ y: 30 }} animate={{ y: 0 }} exit={{ y: 30 }} onClick={e => e.stopPropagation()}>
                             <p className="text-xs font-bold uppercase tracking-widest text-emerald-300">{t('board.lesson_n', { n: confirm.number })}</p>
                             <h3 className="mt-1 font-chalk text-3xl text-white">{confirm.title}</h3>
-                            <MgLine text={confirm.titleMg} show={showMg} />
+                            <MgLine text={confirm.titleMg} show={mgMode !== 'off'} />
                             <p className="mt-3 text-sm text-slate-300">{confirm.objective}</p>
                             <p className="mt-5 rounded-2xl bg-white/[0.05] p-3 text-sm text-slate-200">{t('board.unlock_confirm', { price: syllabus.price, credits: user?.credits ?? 0 })}</p>
                             <div className="mt-5 flex gap-3">

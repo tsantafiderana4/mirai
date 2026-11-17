@@ -1,7 +1,7 @@
 -- =====================================================================
 -- mirai — INSTALLATION COMPLÈTE (à coller une seule fois dans
 -- Supabase > SQL Editor > New query, puis « Run »).
--- Concatène, dans l'ordre : base_schema, security_hardening, ai_rate_limits, board_lessons.
+-- Concatène, dans l'ordre : base_schema, security_hardening, ai_rate_limits, board_lessons, audio_mp3_key_rotation.
 -- Généré à partir de supabase/migrations/ ; ne pas éditer à la main.
 -- =====================================================================
 
@@ -863,3 +863,27 @@ GRANT UPDATE (completed) ON public.board_lesson_access TO authenticated;
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES ('lesson-audio', 'lesson-audio', false, 10485760, ARRAY['audio/wav'])
 ON CONFLICT (id) DO NOTHING;
+
+-- >>> 20261119000000_audio_mp3_key_rotation.sql
+-- =====================================================================
+-- Lot 1 : audio MP3 et rotation intelligente des clés Gemini. Idempotent.
+-- =====================================================================
+
+-- Pauses des clés épuisées (quota 429), par clé ET par modèle.
+-- La clé n'est jamais stockée : seulement une empreinte SHA-256 tronquée.
+CREATE TABLE IF NOT EXISTS public.api_key_cooldowns (
+    key_fp      text NOT NULL,
+    model       text NOT NULL,
+    until       timestamptz NOT NULL,
+    reason      text,
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (key_fp, model)
+);
+-- Réservée au serveur (service_role) : aucune règle d'accès pour le navigateur.
+ALTER TABLE public.api_key_cooldowns ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.api_key_cooldowns FROM anon, authenticated;
+
+-- Le bucket audio accepte désormais le MP3 (10× plus léger que le WAV).
+UPDATE storage.buckets
+   SET allowed_mime_types = ARRAY['audio/mpeg', 'audio/wav']
+ WHERE id = 'lesson-audio';

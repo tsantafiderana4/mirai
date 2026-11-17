@@ -24,24 +24,46 @@ export const boardService = {
         return { lesson, alreadyOwned };
     },
 
-    /** URL (signée, 1 h) ou WAV en base64 de la voix d'une étape. */
+    /**
+     * Voix d'une étape, prête à jouer (URL blob locale).
+     * 1. Cache du téléphone : si l'étape a déjà été écoutée, rien n'est
+     *    téléchargé ni demandé au serveur (data, trafic et quotas épargnés).
+     * 2. Sinon : le serveur renvoie une URL signée (MP3 en cache côté
+     *    Supabase) ou l'audio en base64 ; on le garde ensuite sur le téléphone.
+     */
     async getStepAudio(lessonId: string, stepIndex: number, voiceName?: string): Promise<string> {
-        const res = await callAI<{ url?: string; audioWavBase64?: string }>(
+        const cacheKey = audioCacheKey(lessonId, stepIndex, voiceName || 'Kore');
+        const cached = await readCachedAudio(cacheKey);
+        if (cached) return URL.createObjectURL(cached);
+
+        const res = await callAI<{ url?: string; audioBase64?: string; audioMime?: string; audioWavBase64?: string }>(
             'board_step_audio', { lessonId, stepIndex, voiceName }
         );
-        if (res.url) return res.url;
-        if (res.audioWavBase64) return wavBase64ToObjectUrl(res.audioWavBase64);
-        throw new Error('Audio indisponible');
+        let blob: Blob | null = null;
+        if (res.audioBase64) blob = base64ToBlob(res.audioBase64, res.audioMime || 'audio/mpeg');
+        else if (res.audioWavBase64) blob = base64ToBlob(res.audioWavBase64, 'audio/wav');
+        else if (res.url) {
+            try {
+                const r = await fetch(res.url);
+                if (r.ok) blob = await r.blob();
+            } catch { /* lecture directe de l'URL ci-dessous */ }
+            if (!blob) return res.url;
+        }
+        if (!blob) throw new Error('Audio indisponible');
+        writeCachedAudio(cacheKey, blob);
+        return URL.createObjectURL(blob);
     },
 
     /** Question de l'élève pendant la leçon (1 crédit). */
     async ask(lessonId: string, stepIndex: number, question: string, voiceName?: string) {
-        const res = await callAI<{ answer: BoardAnswer; audioWavBase64?: string }>(
+        const res = await callAI<{ answer: BoardAnswer; audioBase64?: string; audioMime?: string; audioWavBase64?: string }>(
             'board_question', { lessonId, stepIndex, question, voiceName }
         );
+        const b64 = res.audioBase64 || res.audioWavBase64;
+        const mime = res.audioBase64 ? (res.audioMime || 'audio/mpeg') : 'audio/wav';
         return {
             answer: res.answer,
-            audioUrl: res.audioWavBase64 ? wavBase64ToObjectUrl(res.audioWavBase64) : undefined,
+            audioUrl: b64 ? URL.createObjectURL(base64ToBlob(b64, mime)) : undefined,
         };
     },
 
@@ -54,11 +76,41 @@ export const boardService = {
     },
 };
 
-export function wavBase64ToObjectUrl(b64: string): string {
+export function base64ToBlob(b64: string, mime: string): Blob {
     const bin = atob(b64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
+    return new Blob([bytes], { type: mime });
+}
+
+// --- Cache audio sur le téléphone (Cache Storage) -----------------------
+// ~45 Ko par étape en MP3 : 400 étapes ≈ 18 Mo maximum sur le téléphone.
+const AUDIO_CACHE = 'tm-board-audio-v1';
+const AUDIO_CACHE_MAX_ENTRIES = 400;
+
+const audioCacheKey = (lessonId: string, stepIndex: number, voice: string) =>
+    `/__board-audio__/${lessonId}/${stepIndex}-${voice}`;
+
+async function readCachedAudio(key: string): Promise<Blob | null> {
+    try {
+        if (typeof caches === 'undefined') return null;
+        const cache = await caches.open(AUDIO_CACHE);
+        const hit = await cache.match(key);
+        return hit ? await hit.blob() : null;
+    } catch {
+        return null; // navigation privée, stockage plein… : on télécharge simplement
+    }
+}
+
+async function writeCachedAudio(key: string, blob: Blob): Promise<void> {
+    try {
+        if (typeof caches === 'undefined') return;
+        const cache = await caches.open(AUDIO_CACHE);
+        await cache.put(key, new Response(blob, { headers: { 'Content-Type': blob.type || 'audio/mpeg' } }));
+        const keys = await cache.keys();
+        // Les entrées les plus anciennes sont retirées en premier
+        for (const old of keys.slice(0, Math.max(0, keys.length - AUDIO_CACHE_MAX_ENTRIES))) await cache.delete(old);
+    } catch { /* cache facultatif */ }
 }
 
 // --- Préférence de voix (par appareil) ---------------------------------
