@@ -11,7 +11,7 @@
 -- Chaque passage produit au plus UNE voix ; dès qu'une clé est épuisée, elle
 -- est mise en pause et les passages suivants ne demandent plus rien à Google.
 -- =====================================================================
-CREATE EXTENSION IF NOT EXISTS pg_net;
+CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 
 INSERT INTO private.app_config (name, value) VALUES

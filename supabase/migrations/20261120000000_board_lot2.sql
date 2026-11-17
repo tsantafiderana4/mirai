@@ -61,7 +61,7 @@ REVOKE INSERT, UPDATE, DELETE ON public.board_word_reviews FROM anon, authentica
 
 /** Intervalle de révision d'une boîte de Leitner. */
 CREATE OR REPLACE FUNCTION public.board_box_interval(p_box int)
-RETURNS interval LANGUAGE sql IMMUTABLE
+RETURNS interval LANGUAGE sql IMMUTABLE SET search_path = ''
 AS $$ SELECT CASE GREATEST(LEAST(p_box, 5), 1)
   WHEN 1 THEN interval '1 day' WHEN 2 THEN interval '3 days' WHEN 3 THEN interval '7 days'
   WHEN 4 THEN interval '16 days' ELSE interval '35 days' END $$;
