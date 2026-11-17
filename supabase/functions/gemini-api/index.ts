@@ -145,7 +145,9 @@ Deno.serve(async (req) => {
         let defaultChain = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-3.1-flash-preview', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'];
         
         if (actionType === 'audio') {
-            defaultChain = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts-001', 'gemini-2.5-pro-tts-001', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'];
+            // Uniquement des modèles de synthèse vocale : un modèle texte renvoie
+            // « only supports text output » et bloque la rotation des clés.
+            defaultChain = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
         }
 
         const modelsToTry = [...new Set([requestedModel, ...defaultChain])];

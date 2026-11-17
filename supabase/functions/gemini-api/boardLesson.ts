@@ -7,7 +7,7 @@
 // src/components/Board/types.ts : garder les deux fichiers alignés.
 // =====================================================================
 
-export const BOARD_LESSON_VERSION = 'v1'
+export const BOARD_LESSON_VERSION = 'v2'
 export const SYLLABUS_SIZE = 20
 
 // --------------------------------------------------------------------
@@ -103,13 +103,39 @@ export const lessonKey = (lang: string, level: string, n: number) =>
 // --------------------------------------------------------------------
 // Prompts
 // --------------------------------------------------------------------
+/**
+ * Langue de chaque champ. Les élèves sont débutants : une explication écrite
+ * dans la langue étudiée (ex. en anglais) ne leur sert à rien.
+ */
+const FIELD_LANGUAGE_RULES = (lang: string) => `
+LANGUE DE CHAQUE CHAMP (RÈGLE ABSOLUE) :
+- En FRANÇAIS, toujours, même pour le titre : title, objective, summary, text, fr, exampleFr,
+  explanation, question (la question peut citer des mots en ${lang} entre guillemets), say.
+- En ${lang}, uniquement : target, example, breakdown.part, les cellules des tableaux et les options
+  de quiz quand elles sont des réponses en ${lang}.
+- En MALAGASY : mg, titleMg, objectiveMg, summaryMg, exampleMg, breakdown.mg.
+- Exemple INTERDIT : text = "Don't forget the verb!". Exemple CORRECT : text = "N'oublie jamais le verbe !"
+  et la phrase anglaise va dans un élément "sentence" (target = "I am a teacher").`
+
 const MALAGASY_RULES = `
 RÈGLES POUR LE MALAGASY (champs "mg", "titleMg", "objectiveMg", "summaryMg", "exampleMg") :
 - Le public est malgache : le malagasy sert à TRADUIRE ou à CLARIFIER l'explication française.
 - Utilise un malagasy officiel, simple et naturel (comme un bon enseignant à Antananarivo).
 - N'invente jamais de mots. Si un terme technique n'a pas d'équivalent courant, garde le mot
   français entre guillemets et explique-le en malagasy simple.
-- Phrases courtes. Pas de traduction mot à mot maladroite.`
+- Phrases courtes. Pas de traduction mot à mot maladroite.
+- Vocabulaire imposé : « s'entraîner / pratiquer / exerce-toi » se dit « Manaova fanazarana »
+  (jamais « Mampiharaha »).`
+
+/** Corrections automatiques de tournures malagasy fautives déjà repérées. */
+const MG_FIXES: [RegExp, string][] = [
+  [/\bMampiharaha\b/g, 'Manaova fanazarana'],
+  [/\bmampiharaha\b/g, 'manaova fanazarana'],
+]
+
+export function fixMalagasy(text: string): string {
+  return MG_FIXES.reduce((t, [re, by]) => t.replace(re, by), text)
+}
 
 export function buildSyllabusPrompt(lang: string, level: string): string {
   return `Tu es un concepteur pédagogique expert du CECRL, spécialisé dans l'enseignement des langues
@@ -120,8 +146,8 @@ Conçois le programme de ${SYLLABUS_SIZE} leçons pour apprendre le ${lang}, niv
 - Chaque leçon = UNE notion claire (grammaire, vocabulaire thématique ou situation de communication),
   réalisable en 10 minutes.
 - Mélange équilibré : communication utile au quotidien, grammaire essentielle, vocabulaire fréquent.
-- "title" en français (court, concret), "titleMg" en malagasy, "objective" en français
-  (« À la fin, tu sauras… »).
+- "title" en FRANÇAIS (court, concret, ex. « Le verbe être » et non « The verb To Be »),
+  "titleMg" en malagasy, "objective" en français (« À la fin, tu sauras… »).
 ${MALAGASY_RULES}`
 }
 
@@ -180,6 +206,7 @@ RÈGLES :
 - Adapté STRICTEMENT au niveau ${level} : vocabulaire et phrases à la portée de l'élève.
 - "summary" : 3 à 5 points clés (fr) et "summaryMg" : les mêmes en malagasy, dans le même ordre.
 - "title"/"titleMg"/"objective"/"objectiveMg" de la leçon : reprends et précise ceux du programme.
+${FIELD_LANGUAGE_RULES(lang)}
 ${MALAGASY_RULES}`
 }
 
@@ -201,6 +228,7 @@ Réponds comme un excellent professeur :
   que dans le cours : explain, vocab, sentence, table, tip, warning), toujours avec la traduction
   ou l'aide en malagasy dans "mg".
 - Si la question est hors sujet ou inappropriée, réponds poliment en ramenant l'élève à la leçon.
+${FIELD_LANGUAGE_RULES(lang)}
 ${MALAGASY_RULES}`
 }
 
@@ -288,6 +316,12 @@ const clean = (v: unknown, max = 400): string | undefined => {
 const cleanArray = (v: unknown, maxItems: number, maxLen = 200): string[] =>
   Array.isArray(v) ? v.map(x => clean(x, maxLen)).filter((x): x is string => !!x).slice(0, maxItems) : []
 
+/** Champ malagasy : nettoyé puis corrigé (tournures fautives connues). */
+const cleanMg = (v: unknown, max = 400): string | undefined => {
+  const s = clean(v, max)
+  return s ? fixMalagasy(s) : undefined
+}
+
 /** Retire le markdown et les émojis du texte parlé (lu par la synthèse vocale). */
 export function cleanSpoken(v: unknown): string | undefined {
   const s = clean(v, 900)
@@ -307,7 +341,7 @@ export function sanitizeItem(raw: unknown): BoardItem | null {
   const kind = typeof r.kind === 'string' && KINDS.has(r.kind) ? r.kind as BoardItemKind : null
   if (!kind) return null
 
-  const base = { kind, mg: clean(r.mg, 500) }
+  const base = { kind, mg: cleanMg(r.mg, 500) }
 
   switch (kind) {
     case 'title':
@@ -323,7 +357,7 @@ export function sanitizeItem(raw: unknown): BoardItem | null {
       return {
         ...base, target,
         phonetic: clean(r.phonetic, 120), fr: clean(r.fr, 200),
-        example: clean(r.example, 250), exampleFr: clean(r.exampleFr, 250), exampleMg: clean(r.exampleMg, 250),
+        example: clean(r.example, 250), exampleFr: clean(r.exampleFr, 250), exampleMg: cleanMg(r.exampleMg, 250),
       }
     }
     case 'sentence': {
@@ -333,7 +367,7 @@ export function sanitizeItem(raw: unknown): BoardItem | null {
         ? r.breakdown.map(b => {
             const o = (b ?? {}) as Record<string, unknown>
             const part = clean(o.part, 80)
-            return part ? { part, fr: clean(o.fr, 120) ?? '', mg: clean(o.mg, 120) ?? '' } : null
+            return part ? { part, fr: clean(o.fr, 120) ?? '', mg: cleanMg(o.mg, 120) ?? '' } : null
           }).filter((b): b is BreakdownPart => !!b).slice(0, 12)
         : []
       return { ...base, target, fr: clean(r.fr, 250), breakdown: breakdown.length ? breakdown : undefined }
@@ -386,12 +420,12 @@ export function sanitizeLesson(raw: unknown, fallback: SyllabusEntry): BoardLess
     throw new InvalidLessonError(`Leçon générée inexploitable (${steps.length} étapes valides)`)
   }
   const summary = cleanArray(r.summary, 6, 250)
-  const summaryMg = cleanArray(r.summaryMg, 6, 250)
+  const summaryMg = cleanArray(r.summaryMg, 6, 250).map(fixMalagasy)
   return {
     title: clean(r.title, 120) ?? fallback.title,
-    titleMg: clean(r.titleMg, 120) ?? fallback.titleMg,
+    titleMg: cleanMg(r.titleMg, 120) ?? fallback.titleMg,
     objective: clean(r.objective, 300) ?? fallback.objective,
-    objectiveMg: clean(r.objectiveMg, 300) ?? '',
+    objectiveMg: cleanMg(r.objectiveMg, 300) ?? '',
     steps,
     summary,
     summaryMg: summaryMg.length === summary.length ? summaryMg : [],
@@ -405,7 +439,7 @@ export function sanitizeSyllabus(raw: unknown): SyllabusEntry[] {
     const o = (l ?? {}) as Record<string, unknown>
     const title = clean(o.title, 120)
     const objective = clean(o.objective, 300)
-    return title && objective ? { title, titleMg: clean(o.titleMg, 120) ?? '', objective } : null
+    return title && objective ? { title, titleMg: cleanMg(o.titleMg, 120) ?? '', objective } : null
   }).filter((l): l is SyllabusEntry => !!l).slice(0, SYLLABUS_SIZE)
 }
 

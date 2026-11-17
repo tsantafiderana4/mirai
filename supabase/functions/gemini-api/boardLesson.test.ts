@@ -29,7 +29,7 @@ Deno.test('niveaux et numéros de leçon', () => {
   assertEquals(normalizeLessonNumber(0), null)
   assertEquals(normalizeLessonNumber(21), null)
   assertEquals(normalizeLessonNumber(2.5), null)
-  assertEquals(lessonKey('Anglais', 'A1', 3), 'v1|Anglais|A1|3')
+  assertEquals(lessonKey('Anglais', 'A1', 3), 'v2|Anglais|A1|3')
 })
 
 Deno.test('texte parlé : markdown et émojis retirés', () => {
@@ -156,4 +156,39 @@ Deno.test('JSON suivi de texte parasite : partie JSON gardée', () => {
 
 Deno.test('rien de récupérable : erreur d\'origine conservée', () => {
   assertThrows(() => parseModelJsonDetailed('{"title": "coupé'), SyntaxError)
+})
+
+// --- Langue des champs et corrections malagasy ---
+import { fixMalagasy } from './boardLesson.ts'
+
+Deno.test('malagasy : « Mampiharaha » remplacé par « Manaova fanazarana »', () => {
+  assertEquals(fixMalagasy("Mampiharaha miteny 'I am' isan'andro."), "Manaova fanazarana miteny 'I am' isan'andro.")
+  assertEquals(fixMalagasy('Tsara ny mampiharaha.'), 'Tsara ny manaova fanazarana.')
+  assertEquals(fixMalagasy('Manao ahoana'), 'Manao ahoana')
+})
+
+Deno.test('malagasy : correction appliquée à tous les champs malagasy de la leçon', () => {
+  const lesson = sanitizeLesson({
+    title: 'Le verbe être', titleMg: 'Mampiharaha ny to be', objective: 'O', objectiveMg: 'Mampiharaha',
+    summary: ['a'], summaryMg: ['Mampiharaha isan\'andro'],
+    steps: [1, 2, 3, 4].map(() => ({
+      say: 'Bonjour à tous',
+      items: [
+        { kind: 'tip', text: 'Entraîne-toi', mg: 'Mampiharaha isan\'andro' },
+        { kind: 'vocab', target: 'practice', exampleMg: 'Mampiharaha' },
+        { kind: 'sentence', target: 'I practice', breakdown: [{ part: 'practice', fr: 'pratique', mg: 'mampiharaha' }] },
+      ],
+    })),
+  }, entry)
+  const all = JSON.stringify(lesson)
+  assert(!/mampiharaha/i.test(all), all)
+  assert(all.includes('Manaova fanazarana'))
+})
+
+Deno.test('prompts : langue de chaque champ imposée (explications en français)', () => {
+  const p = buildLessonPrompt('Anglais', 'A1', 2, entry, [])
+  assert(p.includes('LANGUE DE CHAQUE CHAMP'))
+  assert(p.includes('Manaova fanazarana'))
+  const lesson = sanitizeLesson({ steps: [step(1), step(2), step(3), step(4)] }, entry)
+  assert(buildQuestionPrompt('Anglais', 'A1', lesson, 0, 'pourquoi ?').includes('LANGUE DE CHAQUE CHAMP'))
 })
