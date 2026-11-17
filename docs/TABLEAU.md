@@ -35,6 +35,27 @@ Un professeur IA explique une leçon au tableau, étape par étape : il **parle 
 
 Le quiz bloque l'enchaînement automatique tant que l'élève n'a pas répondu, mais il peut quand même passer à la suite avec « Suivant ».
 
+## Hors ligne (connexion faible ou absente)
+
+- **Ce qui marche sans Internet** : toute leçon déjà ouverte une fois sur le téléphone, le mini-test et « Mes mots ».
+  - Une leçon ouverte est gardée automatiquement (quelques Ko, 80 leçons au maximum).
+  - Les voix sont gardées dès qu'elles ont été écoutées.
+  - Le bouton **« Garder pour hors ligne »**, sur l'écran de début de leçon, télécharge toutes les voix d'un coup. Une fois fini, il affiche « Prête hors ligne ».
+- **Repères pour l'élève** : un bandeau indique « Hors ligne » et chaque leçon gardée porte la marque « Sur le téléphone ». Les autres leçons sont grisées : en les touchant, l'élève lit un message qui lui explique d'ouvrir la leçon une première fois avec Internet.
+- **Questions au professeur** : elles demandent Internet. Un message le dit clairement.
+- **Progrès hors ligne** : leçon terminée, mots ajoutés, score du mini-test et révisions sont mis en file d'attente sur le téléphone. Ils sont envoyés automatiquement au retour d'Internet, avec le message « tes progrès ont été enregistrés ».
+- **Ouvrir l'app sans Internet** : le service worker garde l'app, Tailwind et les polices. Il faut l'avoir ouverte une fois en ligne, et la session de connexion doit encore être valide.
+
+## Affichage
+
+Le bouton **réglages** (en haut) ouvre la feuille « Affichage » :
+- **Tableau** : ardoise sombre ou tableau blanc (écriture bleue au marqueur, plus lisible en plein soleil) ;
+- **Taille du texte** : normal, grand, très grand. Tout l'écran s'agrandit et, en grand texte, le bouton « Poser une question » ne garde que son icône ;
+- **Sous-titres** du professeur ;
+- **Animations réduites** : activées d'office sur les téléphones modestes (2 Go de mémoire ou moins) ou si le réglage système le demande.
+
+Les préférences sont gardées sur le téléphone.
+
 ## Comment ça marche
 
 ```
@@ -104,6 +125,9 @@ Cet horaire précède la remise à zéro des quotas Gemini (minuit, heure du Pac
 | « Mes mots » | `src/components/Board/ReviewView.tsx` |
 | Signaler une erreur | `src/components/Board/ReportSheet.tsx` |
 | Console admin « Leçons » | `src/components/Board/BoardAdminPanel.tsx` |
+| Hors ligne (cache des leçons, file d'attente des progrès) | `src/services/boardOffline.ts` |
+| Affichage (thème, taille, animations) | `src/components/Board/DisplaySheet.tsx`, `displayPrefs.ts`, `boardTheme.css` |
+| Cache de Tailwind et des polices (service worker) | `vite.config.ts` (workbox `runtimeCaching`) |
 | Tables et fonctions du lot 2, tests SQL | `supabase/migrations/20261120000000_board_lot2.sql`, `supabase/tests/40_board_lot2.sql`, `supabase/CRON_mirai.sql` |
 | Écran (programme, leçon, question, résumé) | `src/components/Board/BoardLessonScreen.tsx` |
 | Rendu des éléments du tableau | `src/components/Board/BoardItemView.tsx` |
@@ -129,4 +153,5 @@ Cet horaire précède la remise à zéro des quotas Gemini (minuit, heure du Pac
 
 - Brancher le même tableau sur l'appel vocal en direct (`LiveTeacher`), en corrigeant d'abord ses deux bugs : l'interruption qui ne coupe pas le son et le micro qui ne se coupe pas.
 - Laisser l'élève choisir une notion libre (« je veux une leçon sur le passé simple »).
-- Leçons disponibles hors ligne, thème clair, taille du texte réglable (lot 3).
+- Tableau sur l'appel vocal en direct (`LiveTeacher`).
+- Leçon « à la carte » sur une notion choisie par l'élève.

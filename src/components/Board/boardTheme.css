@@ -1,0 +1,84 @@
+/*
+ * Thème « tableau blanc » de la Leçon au tableau.
+ * Les écrans sont dessinés pour l'ardoise sombre ; sous .board-light, on
+ * remplace la palette (craie blanche → marqueur bleu, fond vert → blanc).
+ * Les couleurs d'accent (boutons émeraude, ambre) restent identiques.
+ */
+
+.board-root.board-light {
+  background-image: none;
+  background-color: #eceee8;
+  color: #1e293b;
+}
+
+/* Le tableau lui-même et les feuilles (questions, signalement, confirmation) */
+.board-light .board-slate,
+.board-light .bg-\[\#0f1d18\] {
+  background-color: #fdfdfb;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 24px 48px -28px rgba(15, 23, 42, 0.35);
+}
+.board-light .bg-\[\#0b1512\] { background-color: #ffffff; }
+.board-light .slate-dots { opacity: 0.05; background-image: radial-gradient(rgba(15, 23, 42, 0.9) 0.6px, transparent 0.6px); }
+.board-light .slate-glow { opacity: 0.5; }
+
+/* Texte : craie → encre */
+.board-light .text-white { color: #1e293b; }
+.board-light .text-white\/50 { color: rgba(30, 41, 59, 0.5); }
+.board-light .text-white\/40 { color: rgba(30, 41, 59, 0.4); }
+.board-light .font-chalk.text-white { color: #1e3a8a; text-shadow: none; }
+.board-light .text-slate-100 { color: #1e293b; }
+.board-light .text-slate-200 { color: #334155; }
+.board-light .text-slate-300 { color: #475569; }
+.board-light .text-slate-400 { color: #64748b; }
+.board-light .text-emerald-100,
+.board-light .text-emerald-200,
+.board-light .text-emerald-200\/80,
+.board-light .text-emerald-200\/90,
+.board-light .text-emerald-300 { color: #047857; }
+.board-light .text-amber-50,
+.board-light .text-amber-100 { color: #78350f; }
+.board-light .text-amber-200,
+.board-light .text-amber-200\/90,
+.board-light .text-amber-200\/95,
+.board-light .text-amber-300,
+.board-light .text-amber-300\/80 { color: #b45309; }
+.board-light .text-rose-50,
+.board-light .text-rose-100,
+.board-light .text-rose-200,
+.board-light .text-rose-200\/80,
+.board-light .text-rose-200\/90,
+.board-light .text-rose-300 { color: #be123c; }
+.board-light .text-sky-200 { color: #0369a1; }
+
+/* Fonds translucides blancs → voiles gris très légers */
+.board-light .bg-white\/\[0\.02\],
+.board-light .bg-white\/\[0\.03\],
+.board-light .bg-white\/\[0\.04\],
+.board-light .bg-white\/\[0\.05\] { background-color: rgba(15, 23, 42, 0.035); }
+.board-light .bg-white\/\[0\.06\],
+.board-light .bg-white\/\[0\.07\] { background-color: rgba(15, 23, 42, 0.05); }
+.board-light .bg-white\/10 { background-color: rgba(15, 23, 42, 0.07); }
+.board-light .bg-white\/40 { background-color: rgba(15, 23, 42, 0.25); }
+.board-light .bg-black\/20,
+.board-light .bg-black\/25 { background-color: rgba(15, 23, 42, 0.05); }
+.board-light .hover\:bg-white\/\[0\.08\]:hover,
+.board-light .hover\:bg-white\/\[0\.1\]:hover,
+.board-light .hover\:bg-white\/\[0\.12\]:hover,
+.board-light .hover\:bg-white\/\[0\.14\]:hover,
+.board-light .hover\:bg-white\/10:hover,
+.board-light .hover\:bg-white\/20:hover { background-color: rgba(15, 23, 42, 0.09); }
+
+/* Bouton blanc (« Suivant », « Voir la réponse ») : foncé sur fond clair */
+.board-light .bg-white.text-slate-900 { background-color: #1e293b; color: #ffffff; }
+
+/* Contours */
+.board-light .ring-white\/5 { --tw-ring-color: rgba(15, 23, 42, 0.07); }
+.board-light .ring-white\/10 { --tw-ring-color: rgba(15, 23, 42, 0.1); }
+.board-light .ring-white\/15 { --tw-ring-color: rgba(15, 23, 42, 0.14); }
+.board-light .ring-white\/20 { --tw-ring-color: rgba(15, 23, 42, 0.18); }
+.board-light .ring-white { --tw-ring-color: #1e293b; }
+.board-light .border-white\/5,
+.board-light .border-white\/10,
+.board-light .border-white\/15,
+.board-light .border-white\/20,
+.board-light .border-white\/\[0\.07\] { border-color: rgba(15, 23, 42, 0.14); }

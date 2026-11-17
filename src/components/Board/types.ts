@@ -58,6 +58,8 @@ export interface BoardSyllabus {
   level: string;
   price: number;
   lessons: SyllabusLesson[];
+  /** Copie gardée sur le téléphone (pas d'Internet). */
+  offline?: boolean;
 }
 
 export interface BoardAnswer {

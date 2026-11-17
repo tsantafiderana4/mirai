@@ -761,5 +761,26 @@ export const mg = {
     report_sent: "Misaotra ! Voaray ny tatitrao.",
     report_error: "Tsy lasa. Andramo indray afaka kelikely.",
     report_step: "Dingana {n}",
+    // Tsy misy Internet
+    offline_banner: "Tsy misy Internet : azonao ampiasaina ihany ireo lesona voatahiry ao amin'ny findainao.",
+    offline_unavailable: "Mbola tsy ao amin'ny findainao ity lesona ity. Mifandraisa amin'ny Internet hanokafana azy voalohany.",
+    offline_ready: "Ao amin'ny finday",
+    offline_synced: "Tafaverina ny Internet : voatahiry ny fandrosoanao.",
+    download: "Tehirizo hampiasaina tsy misy Internet",
+    downloading: "Maka ny feo… {n}/{total}",
+    download_done: "Vonona hampiasaina tsy misy Internet ny lesona, miaraka amin'ny feo rehetra !",
+    download_partial: "Vonona tsy misy Internet ny lesona. Feo {n} no tsy ao : ny feon'ny finday no hisolo azy.",
+    download_ready: "Vonona tsy misy Internet",
+    ask_offline: "Mila Internet ny fametrahana fanontaniana.",
+    // Fisehoana
+    display: "Fisehoana",
+    theme: "Tabilao",
+    theme_dark: "Tabilao mainty",
+    theme_light: "Tabilao fotsy",
+    text_size: "Haben'ny soratra",
+    size_normal: "Mahazatra",
+    size_large: "Lehibe",
+    size_xl: "Lehibe be",
+    reduce_motion: "Hetsika vitsy kokoa (finday miadana)",
   }
 };

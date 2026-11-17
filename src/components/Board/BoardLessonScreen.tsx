@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, MotionConfig, motion } from 'framer-motion';
 import {
     X, Play, Pause, SkipBack, SkipForward, RotateCcw, MessageCircleQuestion, Lock, CheckCircle2,
-    Loader2, Send, Volume2, VolumeX, Smartphone, Sparkles, ChevronRight, Subtitles, MessageSquareOff, Trophy, BookOpen,
-    Flag, Target, Layers,
+    Loader2, Send, Volume2, VolumeX, Smartphone, Sparkles, ChevronRight, Trophy, BookOpen,
+    Flag, Target, Layers, Settings2, CloudOff, HardDriveDownload,
 } from 'lucide-react';
 import type { BoardAnswer, BoardLesson, BoardSyllabus, BoardVoiceMode, MgMode, SyllabusLesson } from './types';
 import { BoardItemView, MgLine, Bilingual } from './BoardItemView';
@@ -13,6 +13,10 @@ import MiniTestView from './MiniTestView';
 import ReviewView from './ReviewView';
 import ReportSheet from './ReportSheet';
 import { buildMiniTest } from './miniTest';
+import { DisplaySheet } from './DisplaySheet';
+import { loadDisplayPrefs, saveDisplayPrefs, useBoardTextSize, type DisplayPrefs } from './displayPrefs';
+import { flushOutbox, offlineLessonNumbers, OfflineUnavailableError, useOnline } from '../../services/boardOffline';
+import './boardTheme.css';
 import { boardService, loadVoiceMode, saveVoiceMode, languageName } from '../../services/boardService';
 import { AIError } from '../../services/aiClient';
 import { useTranslation } from '../../contexts/LanguageContext';
@@ -34,9 +38,6 @@ const readMgMode = (fallback: MgMode): MgMode => {
 };
 const writeMgMode = (m: MgMode) => { try { localStorage.setItem(MG_MODE_KEY, m); } catch { /* ignore */ } };
 const NEXT_MG_MODE: Record<MgMode, MgMode> = { with: 'first', first: 'off', off: 'with' };
-const SUB_KEY = 'tm_board_subtitles';
-const readFlag = (k: string, def: boolean) => { try { const v = localStorage.getItem(k); return v === null ? def : v === '1'; } catch { return def; } };
-const writeFlag = (k: string, v: boolean) => { try { localStorage.setItem(k, v ? '1' : '0'); } catch { /* ignore */ } };
 
 const TeacherAvatar: React.FC<{ speaking: boolean }> = ({ speaking }) => (
     <div className="relative h-11 w-11 shrink-0">
@@ -57,8 +58,9 @@ const TeacherAvatar: React.FC<{ speaking: boolean }> = ({ speaking }) => (
 // ---------------------------------------------------------------------
 const SyllabusView: React.FC<{
     syllabus: BoardSyllabus | null; error: string | null; mgMode: MgMode;
+    offlineNumbers: Set<number>; online: boolean;
     onOpen: (l: SyllabusLesson) => void; onRetry: () => void;
-}> = ({ syllabus, error, mgMode, onOpen, onRetry }) => {
+}> = ({ syllabus, error, mgMode, offlineNumbers, online, onOpen, onRetry }) => {
     const { t } = useTranslation();
     if (error) {
         return (
@@ -81,11 +83,12 @@ const SyllabusView: React.FC<{
         <ol className="space-y-2.5">
             {syllabus.lessons.map(l => {
                 const isNext = l.number === nextNumber;
+                const onPhone = offlineNumbers.has(l.number);
                 return (
                     <li key={l.number}>
                         <button
                             onClick={() => onOpen(l)}
-                            className={`group flex w-full items-center gap-4 rounded-2xl p-4 text-left ring-1 transition active:scale-[0.99] ${isNext ? 'bg-emerald-400/10 ring-emerald-300/40 hover:bg-emerald-400/15' : 'bg-white/[0.04] ring-white/10 hover:bg-white/[0.08]'}`}
+                            className={`group flex w-full items-center gap-4 rounded-2xl p-4 text-left ring-1 transition active:scale-[0.99] ${isNext ? 'bg-emerald-400/10 ring-emerald-300/40 hover:bg-emerald-400/15' : 'bg-white/[0.04] ring-white/10 hover:bg-white/[0.08]'} ${!online && !onPhone ? 'opacity-45' : ''}`}
                         >
                             <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl font-chalk text-xl ${l.completed ? 'bg-emerald-500 text-emerald-950' : 'bg-white/10 text-white'}`}>
                                 {l.completed ? <CheckCircle2 className="h-6 w-6" /> : l.number}
@@ -93,7 +96,12 @@ const SyllabusView: React.FC<{
                             <span className="min-w-0 flex-1">
                                 <span className="block font-semibold leading-snug text-white">{l.title}</span>
                                 {mgMode !== 'off' && l.titleMg && <span className="block text-sm italic text-amber-200/90" lang="mg">{l.titleMg}</span>}
-                                {isNext && <span className="mt-1 inline-block rounded-full bg-emerald-400/20 px-2 py-0.5 text-[0.7rem] font-bold uppercase tracking-wider text-emerald-200">{t('board.up_next')}</span>}
+                                {(isNext || onPhone) && (
+                                    <span className="mt-1 flex flex-wrap gap-1.5">
+                                        {isNext && <span className="rounded-full bg-emerald-400/20 px-2 py-0.5 text-[0.7rem] font-bold uppercase tracking-wider text-emerald-200">{t('board.up_next')}</span>}
+                                        {onPhone && <span className="flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[0.7rem] font-semibold text-slate-300"><HardDriveDownload className="h-3 w-3" /> {t('board.offline_ready')}</span>}
+                                    </span>
+                                )}
                             </span>
                             {l.unlocked
                                 ? <ChevronRight className="h-5 w-5 text-white/50 transition group-hover:translate-x-0.5" />
@@ -224,9 +232,11 @@ const AskSheet: React.FC<{
 // Vue 3 : la leçon au tableau
 // ---------------------------------------------------------------------
 const LessonView: React.FC<{
-    lesson: BoardLesson; mgMode: MgMode; subtitles: boolean; voiceMode: BoardVoiceMode;
+    lesson: BoardLesson; mgMode: MgMode; subtitles: boolean; voiceMode: BoardVoiceMode; online: boolean;
+    /** Grand texte : boutons réduits à leur icône pour tenir sur un petit écran. */
+    compact: boolean;
     onFinished: () => void; notify: (m: string, t?: string) => void; onShowPayment: () => void;
-}> = ({ lesson, mgMode, subtitles, voiceMode, onFinished, notify, onShowPayment }) => {
+}> = ({ lesson, mgMode, subtitles, voiceMode, online, compact, onFinished, notify, onShowPayment }) => {
     const { t } = useTranslation();
     const voiceName = useAppStore(s => s.user?.preferences?.voiceName);
     const [started, setStarted] = useState(false);
@@ -245,6 +255,24 @@ const LessonView: React.FC<{
     const resumeAfterAsk = useRef(false);
     const [reporting, setReporting] = useState(false);
 
+    // Hors ligne : voix de la leçon gardées sur le téléphone
+    const [audioReady, setAudioReady] = useState<number | null>(null);
+    const [download, setDownload] = useState<{ done: number; total: number } | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        boardService.cachedAudioCount(lesson, voiceName).then(n => { if (!cancelled) setAudioReady(n); });
+        return () => { cancelled = true; };
+    }, [lesson, voiceName]);
+    const downloadAll = async () => {
+        if (!online) { notify(t('board.offline_unavailable'), 'info'); return; }
+        setDownload({ done: 0, total: lesson.steps.length });
+        const missing = await boardService.downloadLesson(lesson, voiceName, (done, total) => setDownload({ done, total }));
+        setDownload(null);
+        setAudioReady(lesson.steps.length - missing);
+        notify(missing ? t('board.download_partial', { n: missing }) : t('board.download_done'), missing ? 'info' : 'success');
+    };
+    const allAudioReady = audioReady !== null && audioReady >= lesson.steps.length;
+
     useEffect(() => { if (player.phase === 'finished') onFinished(); }, [player.phase, onFinished]);
 
     const playAnswer = useCallback(() => {
@@ -259,6 +287,7 @@ const LessonView: React.FC<{
     }, []);
 
     const openAsk = () => {
+        if (!online) { notify(t('board.ask_offline'), 'info'); return; }
         resumeAfterAsk.current = player.phase === 'playing';
         player.pause();
         setAnswer(null);
@@ -331,6 +360,15 @@ const LessonView: React.FC<{
                             >
                                 <Play className="h-5 w-5 fill-current" /> {t('board.start')}
                             </button>
+                            {voiceMode === 'premium' && (allAudioReady ? (
+                                <p className="flex items-center gap-1.5 text-sm font-semibold text-emerald-200"><HardDriveDownload className="h-4 w-4" /> {t('board.download_ready')}</p>
+                            ) : (
+                                <button onClick={downloadAll} disabled={!!download}
+                                    className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] px-4 py-2.5 text-sm font-bold text-slate-200 ring-1 ring-white/10 disabled:opacity-70">
+                                    {download ? <Loader2 className="h-4 w-4 animate-spin" /> : <HardDriveDownload className="h-4 w-4" />}
+                                    {download ? t('board.downloading', { n: download.done, total: download.total }) : t('board.download')}
+                                </button>
+                            ))}
                         </div>
                     ) : (
                         <AnimatePresence mode="wait">
@@ -391,8 +429,8 @@ const LessonView: React.FC<{
                         <span className={player.isLast ? '' : 'hidden sm:inline'}>{player.isLast ? t('board.finish') : t('board.next')}</span> <SkipForward className="h-4 w-4" />
                     </button>
 
-                    <button onClick={openAsk} className="ml-auto flex h-12 shrink-0 items-center gap-2 rounded-full bg-amber-300 px-4 font-extrabold text-amber-950 shadow-[0_8px_24px_-10px_rgba(252,211,77,0.9)] transition active:scale-95">
-                        <MessageCircleQuestion className="h-5 w-5" /> <span>{t('board.ask')}</span>
+                    <button onClick={openAsk} aria-label={t('board.ask')} className={`ml-auto flex h-12 shrink-0 items-center gap-2 rounded-full bg-amber-300 font-extrabold text-amber-950 shadow-[0_8px_24px_-10px_rgba(252,211,77,0.9)] transition active:scale-95 ${compact ? 'w-12 justify-center' : 'px-4'}`}>
+                        <MessageCircleQuestion className="h-5 w-5" /> {!compact && <span>{t('board.ask')}</span>}
                     </button>
                 </div>
             )}
@@ -498,7 +536,14 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
     // Par défaut : malagasy d'abord pour les élèves qui ont choisi le malagasy comme langue d'explication
     const prefersMg = (user?.preferences?.explanationLanguage || '').includes('Malagasy');
     const [mgMode, setMgMode] = useState<MgMode>(() => readMgMode(prefersMg ? 'first' : 'with'));
-    const [subtitles, setSubtitles] = useState(() => readFlag(SUB_KEY, true));
+    const [prefs, setPrefs] = useState<DisplayPrefs>(loadDisplayPrefs);
+    const [showDisplay, setShowDisplay] = useState(false);
+    const updatePrefs = (p: DisplayPrefs) => { setPrefs(p); saveDisplayPrefs(p); };
+    useBoardTextSize(prefs.size);
+    const subtitles = prefs.subtitles;
+    const online = useOnline();
+    const [offlineNumbers, setOfflineNumbers] = useState<Set<number>>(new Set());
+    const refreshOffline = useCallback(() => { offlineLessonNumbers(language, level).then(setOfflineNumbers); }, [language, level]);
     const [voiceMode, setVoiceMode] = useState<BoardVoiceMode>(loadVoiceMode);
     const [wordStats, setWordStats] = useState<{ due: number; total: number } | null>(null);
     const [wordsAdded, setWordsAdded] = useState(0);
@@ -506,7 +551,16 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
     const refreshWords = useCallback(() => {
         boardService.wordStats(language).then(setWordStats).catch(() => {});
     }, [language]);
-    useEffect(() => { refreshWords(); }, [refreshWords]);
+    useEffect(() => { refreshWords(); refreshOffline(); }, [refreshWords, refreshOffline]);
+
+    // Retour d'Internet : on envoie les progrès faits hors ligne
+    useEffect(() => {
+        if (!online) return;
+        flushOutbox().then(sent => {
+            if (sent > 0) { notify(t('board.offline_synced'), 'success'); refreshWords(); }
+        }).catch(() => {});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [online]);
 
     // Chargement du programme. NB : `t` n'est pas mémorisé par LanguageContext,
     // il ne doit donc pas figurer dans les dépendances (sinon boucle infinie).
@@ -528,17 +582,22 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
         try {
             const { lesson: opened } = await boardService.openLesson(language, level, l.number);
             setLesson(opened);
+            refreshOffline();
             setLessonRun(r => r + 1);
             setView('lesson');
             setSyllabus(s => s && { ...s, lessons: s.lessons.map(x => x.number === l.number ? { ...x, unlocked: true } : x) });
         } catch (e) {
             setView('syllabus');
-            if (e instanceof AIError && e.status === 402) { notify(t('board.insufficient'), 'error'); onShowPayment(); }
+            if (e instanceof OfflineUnavailableError) notify(t('board.offline_unavailable'), 'info');
+            else if (e instanceof AIError && e.status === 402) { notify(t('board.insufficient'), 'error'); onShowPayment(); }
             else notify(e instanceof AIError && e.status === 429 ? e.message : t('board.error_lesson'), 'error');
         }
     };
 
-    const requestOpen = (l: SyllabusLesson) => (l.unlocked ? open(l) : setConfirm(l));
+    const requestOpen = (l: SyllabusLesson) => {
+        if (!online && !offlineNumbers.has(l.number)) { notify(t('board.offline_unavailable'), 'info'); return; }
+        return l.unlocked || !online ? open(l) : setConfirm(l);
+    };
 
     const onFinished = useCallback(() => {
         if (!lesson) return;
@@ -561,7 +620,6 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
         notify(t(`board.mg_mode_${next}_hint`), 'info');
         return next;
     });
-    const toggleSubs = () => setSubtitles(v => { writeFlag(SUB_KEY, !v); return !v; });
     const cycleVoice = () => setVoiceMode(v => {
         const nextMode: BoardVoiceMode = v === 'premium' ? 'device' : v === 'device' ? 'off' : 'premium';
         saveVoiceMode(nextMode);
@@ -572,7 +630,8 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
     const VoiceIcon = voiceMode === 'premium' ? Volume2 : voiceMode === 'device' ? Smartphone : VolumeX;
 
     return (
-        <div className="fixed inset-0 z-[300] flex flex-col bg-gradient-to-b from-[#07110e] to-[#0b1512] text-white">
+        <MotionConfig reducedMotion={prefs.reduceMotion ? 'always' : 'user'}>
+        <div className={`board-root fixed inset-0 z-[300] flex flex-col bg-gradient-to-b from-[#07110e] to-[#0b1512] text-white ${prefs.theme === 'light' ? 'board-light' : ''}`}>
             {/* Barre du haut */}
             <header className="flex items-center gap-3 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-6">
                 <button onClick={view === 'syllabus' || view === 'preparing' ? onClose : backToList} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/10" aria-label={t('common.close')}>
@@ -594,11 +653,11 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
                 >
                     {t(`board.mg_mode_${mgMode}`)}
                 </button>
+                <button onClick={() => setShowDisplay(true)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/10" title={t('board.display')} aria-label={t('board.display')}>
+                    <Settings2 className="h-5 w-5" />
+                </button>
                 {view === 'lesson' && (
                     <>
-                        <button onClick={toggleSubs} aria-pressed={subtitles} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/10" title={t('board.subtitles')}>
-                            {subtitles ? <Subtitles className="h-5 w-5" /> : <MessageSquareOff className="h-5 w-5 text-slate-400" />}
-                        </button>
                         <button onClick={cycleVoice} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/10" title={t(`board.voice_${voiceMode}`)} aria-label={t(`board.voice_${voiceMode}`)}>
                             <VoiceIcon className="h-5 w-5" />
                         </button>
@@ -613,15 +672,21 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
                             <h2 className="font-chalk text-3xl text-white">{t('board.program_title')}</h2>
                             <p className="mt-1 text-sm text-slate-400">{t('board.program_subtitle')}</p>
                         </div>
+                        {(!online || syllabus?.offline) && (
+                            <p className="mb-4 flex items-start gap-2.5 rounded-2xl bg-amber-300/15 p-3.5 text-sm font-semibold text-amber-100 ring-1 ring-amber-300/30" role="status">
+                                <CloudOff className="mt-0.5 h-4 w-4 shrink-0" /> {t('board.offline_banner')}
+                            </p>
+                        )}
                         <WordsCard stats={wordStats} onOpen={() => setView('review')} />
-                        <SyllabusView syllabus={syllabus} error={syllabusError?.startsWith('board.') ? t(syllabusError) : syllabusError} mgMode={mgMode} onOpen={requestOpen} onRetry={loadSyllabus} />
+                        <SyllabusView syllabus={syllabus} error={syllabusError?.startsWith('board.') ? t(syllabusError) : syllabusError} mgMode={mgMode}
+                            offlineNumbers={offlineNumbers} online={online} onOpen={requestOpen} onRetry={loadSyllabus} />
                     </>
                 )}
                 {view === 'preparing' && <PreparingView />}
                 {view === 'lesson' && lesson && (
                     <LessonView
                         key={`${lesson.id}-${lessonRun}`}
-                        lesson={lesson} mgMode={mgMode} subtitles={subtitles} voiceMode={voiceMode}
+                        lesson={lesson} mgMode={mgMode} subtitles={subtitles} voiceMode={voiceMode} online={online} compact={prefs.size !== 'normal'}
                         onFinished={onFinished} notify={notify} onShowPayment={onShowPayment}
                     />
                 )}
@@ -649,6 +714,10 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
             </main>
 
             <AnimatePresence>
+                {showDisplay && <DisplaySheet prefs={prefs} onChange={updatePrefs} onClose={() => setShowDisplay(false)} />}
+            </AnimatePresence>
+
+            <AnimatePresence>
                 {reportingSummary && lesson && (
                     <ReportSheet lessonId={lesson.id} stepIndex={null} notify={notify} onClose={() => setReportingSummary(false)} />
                 )}
@@ -673,6 +742,7 @@ const BoardLessonScreen: React.FC<Props> = ({ language, level, onClose, onShowPa
                 )}
             </AnimatePresence>
         </div>
+        </MotionConfig>
     );
 };
 

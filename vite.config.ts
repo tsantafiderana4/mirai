@@ -47,6 +47,26 @@ export default defineConfig(() => {
               handler: 'NetworkOnly',
             },
             {
+              // Styles (Tailwind CDN) et polices : nécessaires pour ouvrir l'app
+              // sans Internet (leçons au tableau hors ligne).
+              urlPattern: ({ url }) => url.hostname === 'cdn.tailwindcss.com' || url.hostname === 'fonts.googleapis.com',
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'app-styles',
+                cacheableResponse: { statuses: [0, 200] },
+                expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 30 }
+              }
+            },
+            {
+              urlPattern: ({ url }) => url.hostname === 'fonts.gstatic.com',
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'app-fonts',
+                cacheableResponse: { statuses: [0, 200] },
+                expiration: { maxEntries: 40, maxAgeSeconds: 60 * 60 * 24 * 365 }
+              }
+            },
+            {
               // Cache external images (e.g., flags, avatars)
               urlPattern: ({ url }) => url.hostname.includes('flagcdn.com') || url.hostname.includes('dicebear.com') || url.hostname.includes('ibb.co'),
               handler: 'CacheFirst',

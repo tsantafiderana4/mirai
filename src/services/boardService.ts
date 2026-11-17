@@ -1,6 +1,7 @@
 import { callAI } from './aiClient';
 import { supabase } from '../lib/supabase';
 import type { BoardAnswer, BoardLesson, BoardLessonReport, BoardSyllabus, BoardVoiceMode, ReviewWord } from '../components/Board/types';
+import * as Offline from './boardOffline';
 
 /**
  * Service « Leçon au tableau ». Toute la génération et la facturation se
@@ -12,16 +13,39 @@ import type { BoardAnswer, BoardLesson, BoardLessonReport, BoardSyllabus, BoardV
 export const languageName = (label: string) => label.trim().split(/\s+/)[0] || label;
 
 export const boardService = {
-    getSyllabus(language: string, level: string) {
-        return callAI<BoardSyllabus>('board_syllabus', { language: languageName(language), level });
+    /** Programme ; sans Internet, la dernière version gardée sur le téléphone. */
+    async getSyllabus(language: string, level: string): Promise<BoardSyllabus> {
+        try {
+            const s = await callAI<BoardSyllabus>('board_syllabus', { language: languageName(language), level });
+            Offline.saveSyllabus(s);
+            return s;
+        } catch (e) {
+            if (Offline.isNetworkError(e)) {
+                const cached = await Offline.loadSyllabus(language, level);
+                if (cached) return { ...cached, offline: true };
+            }
+            throw e;
+        }
     },
 
-    /** Ouvre une leçon : 5 crédits au premier déblocage, gratuit ensuite. */
+    /**
+     * Ouvre une leçon : 5 crédits au premier déblocage, gratuit ensuite. La
+     * leçon est gardée sur le téléphone ; sans Internet, c'est cette copie
+     * qui s'ouvre (OfflineUnavailableError si elle n'a jamais été ouverte).
+     */
     async openLesson(language: string, level: string, lessonNumber: number) {
-        const { lesson, alreadyOwned } = await callAI<{ lesson: BoardLesson; alreadyOwned: boolean }>(
-            'board_lesson_open', { language: languageName(language), level, lessonNumber }
-        );
-        return { lesson, alreadyOwned };
+        try {
+            const { lesson, alreadyOwned } = await callAI<{ lesson: BoardLesson; alreadyOwned: boolean }>(
+                'board_lesson_open', { language: languageName(language), level, lessonNumber }
+            );
+            Offline.saveLesson(lesson);
+            return { lesson, alreadyOwned, offline: false };
+        } catch (e) {
+            if (!Offline.isNetworkError(e)) throw e;
+            const cached = await Offline.loadLesson(language, level, lessonNumber);
+            if (!cached) throw new Offline.OfflineUnavailableError();
+            return { lesson: cached, alreadyOwned: true, offline: true };
+        }
     },
 
     /**
@@ -52,7 +76,7 @@ export const boardService = {
             if (!blob) return res.url;
         }
         if (!blob) throw new Error('Audio indisponible');
-        writeCachedAudio(cacheKey, blob);
+        await writeCachedAudio(cacheKey, blob);
         return URL.createObjectURL(blob);
     },
 
@@ -69,28 +93,53 @@ export const boardService = {
         };
     },
 
-    /** Marque la leçon comme terminée (seule colonne modifiable par l'élève). */
+    /** Marque la leçon comme terminée (envoyé plus tard si hors ligne). */
     async markCompleted(lessonId: string, userId: string) {
-        await supabase.from('board_lesson_access')
-            .update({ completed: true })
-            .eq('lesson_id', lessonId)
-            .eq('user_id', userId);
+        await Offline.sendOrQueue({ kind: 'complete', lessonId, userId });
+    },
+
+    /**
+     * Télécharge toutes les voix d'une leçon sur le téléphone (hors ligne).
+     * Renvoie le nombre d'étapes dont la voix n'a pas pu être gardée.
+     */
+    async downloadLesson(lesson: BoardLesson, voiceName: string | undefined, onProgress: (done: number, total: number) => void): Promise<number> {
+        const voice = voiceName || 'Kore';
+        let missing = 0;
+        const total = lesson.steps.length;
+        for (let i = 0; i < total; i++) {
+            const say = lesson.steps[i].say;
+            if (!(await hasCachedAudio(lesson.id, i, voice, say))) {
+                try {
+                    const url = await this.getStepAudio(lesson.id, i, voice, say);
+                    if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+                } catch { /* compté ci-dessous */ }
+                if (!(await hasCachedAudio(lesson.id, i, voice, say))) missing++;
+            }
+            onProgress(i + 1, total);
+        }
+        return missing;
+    },
+
+    /** Nombre d'étapes dont la voix est déjà sur le téléphone. */
+    async cachedAudioCount(lesson: BoardLesson, voiceName?: string): Promise<number> {
+        const voice = voiceName || 'Kore';
+        let n = 0;
+        for (let i = 0; i < lesson.steps.length; i++) if (await hasCachedAudio(lesson.id, i, voice, lesson.steps[i].say)) n++;
+        return n;
     },
 
     // --- Mini-test -------------------------------------------------------
     /** Enregistre le score (0-100) ; renvoie le meilleur score de l'élève. */
     async saveTestScore(lessonId: string, score: number): Promise<number | null> {
-        const { data, error } = await supabase.rpc('board_save_test_score', { p_lesson_id: lessonId, p_score: Math.round(score) });
-        if (error) throw error;
-        return data as number | null;
+        const res = await Offline.sendOrQueue({ kind: 'rpc', fn: 'board_save_test_score', args: { p_lesson_id: lessonId, p_score: Math.round(score) } });
+        return res.queued ? null : (res.data as number | null);
     },
 
     // --- « Mes mots » (révision espacée) -------------------------------------
     /** Ajoute le vocabulaire de la leçon (lu côté serveur) ; renvoie le nombre de mots ajoutés. */
     async addLessonWords(lessonId: string): Promise<number> {
-        const { data, error } = await supabase.rpc('board_words_add', { p_lesson_id: lessonId });
-        if (error) throw error;
-        return (data as number) ?? 0;
+        const res = await Offline.sendOrQueue({ kind: 'rpc', fn: 'board_words_add', args: { p_lesson_id: lessonId } });
+        return res.queued ? 0 : ((res.data as number) ?? 0);
     },
 
     /** Nombre de mots à revoir maintenant et nombre total, pour une langue. */
@@ -100,8 +149,13 @@ export const boardService = {
             supabase.from('board_word_reviews').select('id', { count: 'exact', head: true }).eq('language', lang).lte('due_at', new Date().toISOString()),
             supabase.from('board_word_reviews').select('id', { count: 'exact', head: true }).eq('language', lang),
         ]);
-        if (due.error) throw due.error;
-        if (total.error) throw total.error;
+        const err = due.error || total.error;
+        if (err) {
+            const cached = Offline.isNetworkError(err) ? Offline.offlineWordStats(language) : null;
+            if (cached) return cached;
+            throw err;
+        }
+        Offline.saveWordsTotal(language, total.count ?? 0);
         return { due: due.count ?? 0, total: total.count ?? 0 };
     },
 
@@ -113,12 +167,18 @@ export const boardService = {
             .lte('due_at', new Date().toISOString())
             .order('due_at', { ascending: true })
             .limit(limit);
-        if (error) throw error;
-        return (data ?? []) as ReviewWord[];
+        if (error) {
+            if (Offline.isNetworkError(error)) return Offline.offlineDueWords(language).slice(0, limit);
+            throw error;
+        }
+        const words = (data ?? []) as ReviewWord[];
+        Offline.saveWordsSnapshot(language, words);
+        return words;
     },
 
     /** Prochaine date de révision (quand rien n'est à revoir). */
     async nextDueAt(language: string): Promise<string | null> {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
         const { data } = await supabase.from('board_word_reviews')
             .select('due_at').eq('language', languageName(language))
             .order('due_at', { ascending: true }).limit(1).maybeSingle();
@@ -126,8 +186,8 @@ export const boardService = {
     },
 
     async reviewWord(id: string, known: boolean) {
-        const { error } = await supabase.rpc('board_word_review', { p_id: id, p_known: known });
-        if (error) throw error;
+        Offline.markWordReviewedLocally(id);
+        await Offline.sendOrQueue({ kind: 'rpc', fn: 'board_word_review', args: { p_id: id, p_known: known } });
     },
 
     // --- Signalements ------------------------------------------------------
@@ -218,6 +278,15 @@ async function readCachedAudio(key: string): Promise<Blob | null> {
         return hit ? await hit.blob() : null;
     } catch {
         return null; // navigation privée, stockage plein… : on télécharge simplement
+    }
+}
+
+async function hasCachedAudio(lessonId: string, stepIndex: number, voice: string, say: string): Promise<boolean> {
+    try {
+        if (typeof caches === 'undefined') return false;
+        return !!(await (await caches.open(AUDIO_CACHE)).match(audioCacheKey(lessonId, stepIndex, voice, say)));
+    } catch {
+        return false;
     }
 }
 

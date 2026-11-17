@@ -761,5 +761,26 @@ export const fr = {
     report_sent: "Merci ! Ton signalement a été envoyé.",
     report_error: "Envoi impossible. Réessaie plus tard.",
     report_step: "Étape {n}",
+    // Hors ligne
+    offline_banner: "Hors ligne : tes leçons gardées sur le téléphone restent disponibles.",
+    offline_unavailable: "Cette leçon n'est pas encore sur ton téléphone. Connecte-toi à Internet pour l'ouvrir une première fois.",
+    offline_ready: "Sur le téléphone",
+    offline_synced: "De retour en ligne : tes progrès ont été enregistrés.",
+    download: "Garder pour hors ligne",
+    downloading: "Téléchargement des voix… {n}/{total}",
+    download_done: "Leçon prête hors ligne, avec toutes les voix !",
+    download_partial: "Leçon prête hors ligne. {n} voix manquent : la voix du téléphone les remplacera.",
+    download_ready: "Prête hors ligne",
+    ask_offline: "Poser une question demande Internet.",
+    // Affichage
+    display: "Affichage",
+    theme: "Tableau",
+    theme_dark: "Ardoise",
+    theme_light: "Tableau blanc",
+    text_size: "Taille du texte",
+    size_normal: "Normal",
+    size_large: "Grand",
+    size_xl: "Très grand",
+    reduce_motion: "Animations réduites (téléphone lent)",
   }
 };
