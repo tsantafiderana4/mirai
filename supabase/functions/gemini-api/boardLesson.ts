@@ -139,11 +139,16 @@ LEÇON ${n} : « ${entry.title} »
 Objectif : ${entry.objective}
 ${prev}
 
-FORMAT : une suite de 7 à 10 ÉTAPES. Chaque étape contient :
-- "say" : ce que tu DIS à voix haute, en FRANÇAIS, 2 à 4 phrases (40 à 70 mots), ton naturel et
+FORMAT : une suite de 7 à 8 ÉTAPES. Chaque étape contient :
+- "say" : ce que tu DIS à voix haute, en FRANÇAIS, 2 à 3 phrases (30 à 55 mots), ton naturel et
   encourageant, comme en classe. Tu peux y prononcer des mots en ${lang}. Pas d'émojis, pas de
   markdown, pas de listes : uniquement du texte parlé.
-- "items" : ce que tu ÉCRIS au tableau pendant que tu parles (1 à 4 éléments).
+- "items" : ce que tu ÉCRIS au tableau pendant que tu parles (1 à 3 éléments).
+
+CONCISION (OBLIGATOIRE) :
+- Chaque champ texte fait au maximum 200 caractères. Un tableau a au plus 6 lignes.
+- Ne remplis QUE les champs utiles au type d'élément (laisse les autres absents).
+- Ne répète jamais un élément, une phrase ou une liste. La leçon entière reste courte et dense.
 
 TYPES D'ÉLÉMENTS ("kind") ET CHAMPS :
 - "title" : grand titre de section. text (fr), mg.
@@ -153,7 +158,7 @@ TYPES D'ÉLÉMENTS ("kind") ET CHAMPS :
 - "sentence" : phrase modèle. target (${lang}), fr, mg, et breakdown = découpage mot à mot
   [{part (${lang}), fr, mg}] quand cela aide à comprendre la structure.
 - "table" : tableau (conjugaison, pronoms, comparaison…). text (titre du tableau, fr), mg,
-  headers (2 à 4 colonnes), rows (2 à 8 lignes, même nombre de cellules que headers).
+  headers (2 à 4 colonnes), rows (2 à 6 lignes, même nombre de cellules que headers).
 - "tip" : astuce de mémorisation. text (fr), mg.
 - "warning" : erreur fréquente à éviter (pense aux erreurs typiques des locuteurs malgaches et
   francophones). text (fr), mg.
@@ -220,6 +225,10 @@ const ITEM_SCHEMA = {
     question: STR, options: STR_ARRAY, answer: STR, explanation: STR,
   },
   required: ['kind'],
+  propertyOrdering: [
+    'kind', 'text', 'mg', 'target', 'phonetic', 'fr', 'example', 'exampleFr', 'exampleMg',
+    'breakdown', 'headers', 'rows', 'question', 'options', 'answer', 'explanation',
+  ],
 }
 
 export const SYLLABUS_SCHEMA = {
@@ -231,6 +240,7 @@ export const SYLLABUS_SCHEMA = {
         type: 'OBJECT',
         properties: { title: STR, titleMg: STR, objective: STR },
         required: ['title', 'titleMg', 'objective'],
+        propertyOrdering: ['title', 'titleMg', 'objective'],
       },
     },
   },
@@ -247,18 +257,23 @@ export const LESSON_SCHEMA = {
         type: 'OBJECT',
         properties: { say: STR, items: { type: 'ARRAY', items: ITEM_SCHEMA } },
         required: ['say', 'items'],
+        propertyOrdering: ['say', 'items'],
       },
     },
     summary: STR_ARRAY,
     summaryMg: STR_ARRAY,
   },
   required: ['title', 'titleMg', 'objective', 'objectiveMg', 'steps', 'summary', 'summaryMg'],
+  // Titre et résumé AVANT les étapes : ils restent exploitables même si la
+  // réponse est coupée en cours de route.
+  propertyOrdering: ['title', 'titleMg', 'objective', 'objectiveMg', 'summary', 'summaryMg', 'steps'],
 }
 
 export const ANSWER_SCHEMA = {
   type: 'OBJECT',
   properties: { say: STR, items: { type: 'ARRAY', items: ITEM_SCHEMA } },
   required: ['say', 'items'],
+  propertyOrdering: ['say', 'items'],
 }
 
 // --------------------------------------------------------------------
@@ -404,10 +419,61 @@ export function sanitizeAnswer(raw: unknown): BoardAnswer {
   return { say, items }
 }
 
-/** Gemini peut renvoyer du JSON entouré de ```json … ``` */
-export function parseModelJson(rawText: string): unknown {
+/**
+ * Répare un JSON coupé net (réponse du modèle tronquée par la limite de
+ * sortie) : on coupe après le dernier élément COMPLET (dernière virgule hors
+ * chaîne) et on referme les crochets/accolades encore ouverts.
+ * Renvoie null si rien d'exploitable.
+ */
+export function closeTruncatedJson(text: string): string | null {
+  const stack: string[] = []
+  let inStr = false, esc = false
+  let lastCut = -1
+  let stackAtCut: string[] = []
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (c === '\\') esc = true
+      else if (c === '"') inStr = false
+      continue
+    }
+    if (c === '"') inStr = true
+    else if (c === '{') stack.push('}')
+    else if (c === '[') stack.push(']')
+    else if (c === '}' || c === ']') {
+      stack.pop()
+      if (stack.length === 0) return text.slice(0, i + 1) // JSON complet (texte en trop ensuite)
+    } else if (c === ',') {
+      lastCut = i
+      stackAtCut = [...stack]
+    }
+  }
+  if (lastCut < 0) return null
+  return text.slice(0, lastCut) + stackAtCut.reverse().join('')
+}
+
+export interface ParsedModelJson { value: unknown; repaired: boolean }
+
+/**
+ * Gemini peut renvoyer du JSON entouré de ```json … ```, ou coupé net si la
+ * réponse dépasse la limite : dans ce cas on récupère la partie complète.
+ */
+export function parseModelJsonDetailed(rawText: string): ParsedModelJson {
   const t = rawText.replace(/```json\s*|```/g, '').trim()
-  return JSON.parse(t)
+  try {
+    return { value: JSON.parse(t), repaired: false }
+  } catch (e) {
+    const fixed = closeTruncatedJson(t)
+    if (fixed) {
+      try { return { value: JSON.parse(fixed), repaired: true } } catch { /* irrécupérable */ }
+    }
+    throw e
+  }
+}
+
+export function parseModelJson(rawText: string): unknown {
+  return parseModelJsonDetailed(rawText).value
 }
 
 // --------------------------------------------------------------------

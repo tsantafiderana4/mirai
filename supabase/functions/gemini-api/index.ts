@@ -246,26 +246,48 @@ Deno.serve(async (req) => {
     const VOICES = new Set(['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'])
     const db = adminClient
 
-    /** Appel Gemini avec schéma JSON imposé ; ignore les parties « pensée ». */
+    // Les Edge Functions sont coupées au bout de 150 s : on ne relance un essai
+    // que s'il reste assez de temps pour qu'il aboutisse.
+    const BOARD_RETRY_DEADLINE_MS = 60_000
+    const boardStart = Date.now()
+
+    /**
+     * Appel Gemini avec schéma JSON imposé ; ignore les parties « pensée ».
+     * Sortie plafonnée : une leçon tient en ~4 000 jetons ; au-delà, le modèle
+     * « s'emballe » (répétitions). Une réponse coupée est récupérée jusqu'au
+     * dernier élément complet.
+     */
     async function generateJson(prompt: string, schema: unknown, temperature = 0.6): Promise<unknown> {
       const res = await fetchWithSmartRotation('generateContent', {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature, maxOutputTokens: 16384 },
+        generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature, maxOutputTokens: 10000 },
       }, keys, 'gemini-3-flash-preview')
       const data = await res.json()
-      const parts = (data.candidates?.[0]?.content?.parts ?? []) as { text?: string; thought?: boolean }[]
-      return Board.parseModelJson(parts.filter(p => !p.thought).map(p => p.text ?? '').join(''))
+      const candidate = data.candidates?.[0]
+      const parts = (candidate?.content?.parts ?? []) as { text?: string; thought?: boolean }[]
+      const raw = parts.filter(p => !p.thought).map(p => p.text ?? '').join('')
+      try {
+        const parsed = Board.parseModelJsonDetailed(raw)
+        if (parsed.repaired) {
+          console.warn(`[Board] Réponse coupée (finishReason=${candidate?.finishReason}, ${raw.length} car.) : partie complète récupérée`)
+        }
+        return parsed.value
+      } catch (e) {
+        console.warn(`[Board] JSON illisible (finishReason=${candidate?.finishReason}, ${raw.length} car.). Fin : …${raw.slice(-300)}`)
+        throw e
+      }
     }
 
-    /** Génère, valide et réessaie une fois si la sortie du modèle est inexploitable. */
+    /** Génère, valide et réessaie une fois si la sortie est inexploitable ET s'il reste du temps. */
     async function generateValid<T>(prompt: string, schema: unknown, sanitize: (raw: unknown) => T): Promise<T> {
       for (let attempt = 0; ; attempt++) {
         try {
-          return sanitize(await generateJson(prompt, schema, attempt === 0 ? 0.6 : 0.4))
+          return sanitize(await generateJson(prompt, schema, attempt === 0 ? 0.6 : 0.3))
         } catch (e) {
           const retryable = e instanceof Board.InvalidLessonError || e instanceof SyntaxError
-          if (!retryable || attempt >= 1) throw e
-          console.warn('[Board] Sortie invalide, nouvel essai :', (e as Error).message)
+          const elapsed = Date.now() - boardStart
+          if (!retryable || attempt >= 1 || elapsed > BOARD_RETRY_DEADLINE_MS) throw e
+          console.warn(`[Board] Sortie invalide après ${Math.round(elapsed / 1000)} s, nouvel essai :`, (e as Error).message)
         }
       }
     }

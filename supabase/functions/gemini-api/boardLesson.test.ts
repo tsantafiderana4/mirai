@@ -115,3 +115,45 @@ Deno.test('prompts : contiennent la langue, le niveau et les règles malagasy', 
   assert(q.includes('Étape 4'))
   assert(q.length < 3000, 'question tronquée')
 })
+
+// --- Réponses coupées net par la limite de sortie (cas observé en production) ---
+import { closeTruncatedJson, parseModelJsonDetailed } from './boardLesson.ts'
+
+const fullLesson = {
+  title: 'Se présenter', titleMg: 'Mampahafantatra tena', objective: 'O', objectiveMg: 'Om',
+  summary: ['a'], summaryMg: ['A'],
+  steps: [1, 2, 3, 4, 5, 6].map(n => ({ say: `Étape ${n}, dis "hello" \\ ok`, items: [{ kind: 'explain', text: `T${n}`, mg: `M${n}` }] })),
+}
+
+Deno.test('JSON complet : inchangé, non réparé', () => {
+  const r = parseModelJsonDetailed(JSON.stringify(fullLesson))
+  assertEquals(r.repaired, false)
+  assertEquals((r.value as typeof fullLesson).steps.length, 6)
+})
+
+Deno.test('JSON coupé au milieu de la 6e étape : 5 étapes complètes récupérées', () => {
+  const text = JSON.stringify(fullLesson)
+  const cut = text.slice(0, text.indexOf('Étape 6') + 4) // coupé dans une chaîne
+  const r = parseModelJsonDetailed(cut)
+  assertEquals(r.repaired, true)
+  const lesson = sanitizeLesson(r.value, entry)
+  assertEquals(lesson.steps.length, 5)
+  assertEquals(lesson.title, 'Se présenter')
+  assertEquals(lesson.summaryMg, ['A'])
+  assert(lesson.steps[0].say.includes('"hello"'))
+})
+
+Deno.test('JSON coupé juste après une échappement \\" : pas de faux repérage de fin de chaîne', () => {
+  const text = JSON.stringify(fullLesson)
+  const at = text.indexOf('\\"hello', text.indexOf('Étape 6'))
+  const r = parseModelJsonDetailed(text.slice(0, at + 1))
+  assertEquals(sanitizeLesson(r.value, entry).steps.length, 5)
+})
+
+Deno.test('JSON suivi de texte parasite : partie JSON gardée', () => {
+  assertEquals(closeTruncatedJson('{"a":[1,2]} blabla'), '{"a":[1,2]}')
+})
+
+Deno.test('rien de récupérable : erreur d\'origine conservée', () => {
+  assertThrows(() => parseModelJsonDetailed('{"title": "coupé'), SyntaxError)
+})
